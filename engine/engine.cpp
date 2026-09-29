@@ -106,7 +106,31 @@ int Engine::progIndex(const char* name) const {
   return -1;
 }
 
+// The shaders are written against GLSL 4.50. In a 4.1 context (Resolume's)
+// the same code runs through ARB extensions the driver still offers, so the
+// header is swapped for one that asks for them by name.
+static std::string legacyHeader(GLenum stage) {
+  std::string h = "#version 410 core\n#extension GL_ARB_shading_language_420pack : require\n";
+  if (stage == COMPUTE_SHADER) {
+    h += "#extension GL_ARB_compute_shader : require\n"
+         "#extension GL_ARB_shader_storage_buffer_object : require\n"
+         "#extension GL_ARB_shader_image_load_store : require\n"
+         "#extension GL_ARB_shading_language_packing : enable\n"
+         "#extension GL_ARB_shader_image_size : enable\n"
+         "#extension GL_ARB_gpu_shader5 : enable\n";
+  }
+  return h;
+}
+
 unsigned Engine::compile(const char* name, GLenum stage, const char* src) {
+  std::string patched;
+  if (legacy_) {
+    const char* v = std::strstr(src, "#version 450 core");
+    if (v) {
+      patched = std::string(src, v) + legacyHeader(stage) + (v + std::strlen("#version 450 core"));
+      src = patched.c_str();
+    }
+  }
   GLuint s = CreateShader(stage);
   ShaderSource(s, 1, &src, nullptr);
   CompileShader(s);
@@ -184,16 +208,38 @@ bool Engine::buildPrograms() {
   return true;
 }
 
+// Every buffer the engine makes, with its size, so a reset can zero it.
+static std::vector<std::pair<GLuint, GLsizeiptr>>& bufferSizes() {
+  static std::vector<std::pair<GLuint, GLsizeiptr>> v;
+  return v;
+}
+
+static void zeroBuffer(GLenum target, GLuint b, GLsizeiptr size) {
+  // WebGPU hands a buffer over zeroed and the signal path counts on it (the
+  // flywheel's never-run servo state is zero); GL hands over garbage.
+  // glClearBufferData is 4.3; uploading zeros works everywhere.
+  static std::vector<uint8_t> zeros;
+  if (static_cast<GLsizeiptr>(zeros.size()) < size) zeros.assign(static_cast<size_t>(size), 0);
+  BindBuffer(target, b);
+  BufferSubData(target, 0, size, zeros.data());
+  BindBuffer(target, 0);
+}
+
 static GLuint makeBuffer(GLenum target, GLsizeiptr size) {
   GLuint b = 0;
   GenBuffers(1, &b);
   BindBuffer(target, b);
   BufferData(target, size, nullptr, DYNAMIC_DRAW);
-  // WebGPU hands a buffer over zeroed and the signal path counts on it (the
-  // flywheel's never-run servo state is zero); GL hands over garbage.
-  ClearBufferData(target, R32F, RED, FLOAT, nullptr);
   BindBuffer(target, 0);
+  zeroBuffer(target, b, size);
+  bufferSizes().push_back({b, size});
   return b;
+}
+
+static GLsizeiptr sizeOf(GLuint b) {
+  for (const auto& p : bufferSizes())
+    if (p.first == b) return p.second;
+  return 0;
 }
 
 static GLuint makeTexture(int w, int h, GLenum fmt) {
@@ -255,8 +301,12 @@ void Engine::createResources() {
   outTex_ = makeTexture(ACTIVE_WIDTH, ACTIVE_HEIGHT, RGBA8);
   // The decoded screen is stored sRGB-encoded while the gun transfer is
   // active, and crtFace reads it through an sRGB view so the sampler decodes.
-  GenTextures(1, &outSrgb_);
-  TextureView(outSrgb_, TEXTURE_2D, outTex_, SRGB8_ALPHA8, 0, 1, 0, 1);
+  // Without glTextureView (4.3) crtFace reads the plain view; only presets
+  // with the gun's cutoff/gamma up see the difference (a coarser dark end).
+  if (TextureView != nullptr) {
+    GenTextures(1, &outSrgb_);
+    TextureView(outSrgb_, TEXTURE_2D, outTex_, SRGB8_ALPHA8, 0, 1, 0, 1);
+  }
   BindTexture(TEXTURE_2D, outSrgb_);
   TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
   TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
@@ -283,6 +333,7 @@ void Engine::destroyResources() {
                    progSnap_, chromaBuf_, underBuf_, lineInfoBuf_, lineParamsBuf_, timingBuf_, syncMeasureBuf_,
                    audioBuf_, ccBuf_, cgBuf_, persist_[0], persist_[1]};
   DeleteBuffers(static_cast<GLsizei>(sizeof bufs / sizeof bufs[0]), bufs);
+  bufferSizes().clear();
   GLuint texs[] = {texA_, texB_, inputTex_, outSrgb_, outTex_, faceTex_, grainTex_};
   DeleteTextures(static_cast<GLsizei>(sizeof texs / sizeof texs[0]), texs);
   DeleteSamplers(1, &sampler_);
@@ -306,9 +357,34 @@ bool Engine::build(GetProcFn getProc) {
   GLint major = 0, minor = 0;
   GetIntegerv(0x821B, &major);  // GL_MAJOR_VERSION
   GetIntegerv(0x821C, &minor);  // GL_MINOR_VERSION
-  if (major < 4 || (major == 4 && minor < 3)) {
-    error_ = "needs OpenGL 4.3 (compute shaders); context is " + std::to_string(major) + "." + std::to_string(minor);
+  glInfo_ += " (context " + std::to_string(major) + "." + std::to_string(minor) + ")";
+  if (major < 4 || (major == 4 && minor < 1)) {
+    error_ = "needs OpenGL 4.1 or newer; context is " + std::to_string(major) + "." + std::to_string(minor);
     return false;
+  }
+  if (major == 4 && minor < 3) {
+    // Compute shaders are core from 4.3; below that they have to come in as
+    // extensions, which Windows drivers still offer inside a 4.1 context.
+    legacy_ = true;
+    GLint n = 0;
+    GetIntegerv(NUM_EXTENSIONS, &n);
+    auto has = [&](const char* ext) {
+      for (GLint i = 0; i < n; i++) {
+        const GLubyte* s = GetStringi(EXTENSIONS, static_cast<GLuint>(i));
+        if (s && std::strcmp(reinterpret_cast<const char*>(s), ext) == 0) return true;
+      }
+      return false;
+    };
+    std::string missing;
+    for (const char* ext : {"GL_ARB_compute_shader", "GL_ARB_shader_storage_buffer_object", "GL_ARB_shader_image_load_store",
+                            "GL_ARB_shading_language_420pack", "GL_ARB_texture_storage", "GL_ARB_shading_language_packing"}) {
+      if (!has(ext)) missing += std::string(missing.empty() ? "" : ", ") + ext;
+    }
+    if (!missing.empty()) {
+      error_ = "this OpenGL " + std::to_string(major) + "." + std::to_string(minor) +
+               " context lacks compute-shader support (missing " + missing + ")";
+      return false;
+    }
   }
   if (!buildPrograms()) return false;
   createResources();
@@ -464,7 +540,7 @@ unsigned Engine::texOf(int r) const {
     case T_SRCB: return texB_;
     case T_INPUT: return inputTex_;
     case T_OUT: return outTex_;
-    case T_OUT_CRT: return chain_->gates.crtSrgb ? outSrgb_ : outTex_;
+    case T_OUT_CRT: return chain_->gates.crtSrgb && outSrgb_ ? outSrgb_ : outTex_;
     case T_FACE: return faceTex_;
     case T_GRAIN: return grainTex_;
   }
@@ -665,13 +741,13 @@ void Engine::resetSignal() {
   if (!ok_) return;
   for (GLuint b : {paramsUbo_, feedAUbo_, feedBUbo_}) {
     BindBuffer(UNIFORM_BUFFER, b);
-    ClearBufferData(UNIFORM_BUFFER, R32F, RED, FLOAT, nullptr);
+    zeroBuffer(UNIFORM_BUFFER, b, sizeOf(b));
   }
   BindBuffer(UNIFORM_BUFFER, 0);
   for (GLuint b : {filterBuf_, uvfBBuf_, compA_, compB_, bComp_, compPrev_, progSnap_, chromaBuf_, underBuf_,
                    lineInfoBuf_, lineParamsBuf_, timingBuf_, syncMeasureBuf_, audioBuf_, persist_[0], persist_[1]}) {
     BindBuffer(SHADER_STORAGE_BUFFER, b);
-    ClearBufferData(SHADER_STORAGE_BUFFER, R32F, RED, FLOAT, nullptr);
+    zeroBuffer(SHADER_STORAGE_BUFFER, b, sizeOf(b));
   }
   BindBuffer(SHADER_STORAGE_BUFFER, 0);
   for (GLuint t : {inputTex_, outTex_, faceTex_}) clearTexture(t);

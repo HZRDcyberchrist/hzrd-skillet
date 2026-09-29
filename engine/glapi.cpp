@@ -14,7 +14,9 @@ const char* load(GetProcFn getProc) {
   {                                                                                \
     const char* glName = std::strcmp(#name, "MemBarrier") == 0 ? "glMemoryBarrier" : "gl" #name; \
     name = reinterpret_cast<PFN_##name>(getProc(glName));                          \
-    if (name == nullptr) return glName;                                            \
+    /* 4.3-only calls the engine can live without in a 4.1 context */          \
+    if (name == nullptr && std::strcmp(#name, "TextureView") != 0 &&              \
+        std::strcmp(#name, "ClearBufferData") != 0) return glName;                 \
   }
   SKILLET_GL_FUNCS(SKILLET_LOAD)
 #undef SKILLET_LOAD

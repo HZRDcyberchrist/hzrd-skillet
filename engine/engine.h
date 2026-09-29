@@ -85,6 +85,7 @@ class Engine {
   unsigned texOf(int r) const;
 
   bool ok_ = false;
+  bool legacy_ = false;  // a 4.1 context: compute through ARB extensions
   std::string error_;
   std::string glInfo_;
   std::unique_ptr<SignalChain> chain_;

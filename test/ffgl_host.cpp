@@ -2,6 +2,7 @@
 // way Resolume does (initialise, instantiate, set parameters, process) and
 // saves what it drew. Exercises the wrapper, presets, pads and knobs.
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -33,7 +34,7 @@ static int findParam(const char* name) {
 int main(int argc, char** argv) {
   EGLDisplay d = eglGetPlatformDisplay(0x31DD, 0, 0); EGLint a, b; eglInitialize(d, &a, &b); eglBindAPI(0x30A2);
   EGLint ca[] = {0x3040, 0x0008, 0x3038}; EGLConfig cfg = 0; EGLint n = 0; eglChooseConfig(d, ca, &cfg, 1, &n);
-  EGLint at[] = {0x3098, 4, 0x30FB, 5, 0x30FD, 1, 0x3038}; EGLContext c = eglCreateContext(d, n ? cfg : 0, 0, at); eglMakeCurrent(d, 0, 0, c);
+  const char* glv = getenv("SKILLET_TEST_GL_MINOR"); EGLint at[] = {0x3098, 4, 0x30FB, glv ? atoi(glv) : 5, 0x30FD, 1, 0x3038}; EGLContext c = eglCreateContext(d, n ? cfg : 0, 0, at); eglMakeCurrent(d, 0, 0, c);
   using namespace skillet::gl; load(gp); glewShimInit();
   PluginInfoStruct* info = (PluginInfoStruct*)call(FF_GET_INFO, u(0), nullptr).PointerValue;
   printf("plugin: %.4s '%.16s' type=%u\n", (const char*)info->PluginUniqueID, (const char*)info->PluginName, info->PluginType);

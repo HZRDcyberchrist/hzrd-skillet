@@ -29,6 +29,7 @@ using GLsizeiptr = std::ptrdiff_t;
 // name, return, params
 #define SKILLET_GL_FUNCS(X)                                                                          \
   X(GetString, const GLubyte*, (GLenum))                                                            \
+  X(GetStringi, const GLubyte*, (GLenum, GLuint))                                                   \
   X(GetIntegerv, void, (GLenum, GLint*))                                                             \
   X(GetError, GLenum, (void))                                                                       \
   X(Enable, void, (GLenum))                                                                          \
@@ -101,7 +102,7 @@ const char* load(GetProcFn getProc);
 
 // constants
 constexpr GLenum NO_ERROR_ = 0;
-constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02;
+constexpr GLenum VENDOR = 0x1F00, RENDERER = 0x1F01, VERSION = 0x1F02, EXTENSIONS = 0x1F03, NUM_EXTENSIONS = 0x821D;
 constexpr GLenum COMPUTE_SHADER = 0x91B9, VERTEX_SHADER = 0x8B31, FRAGMENT_SHADER = 0x8B30;
 constexpr GLenum COMPILE_STATUS = 0x8B81, LINK_STATUS = 0x8B82, INFO_LOG_LENGTH = 0x8B84;
 constexpr GLenum UNIFORM_BUFFER = 0x8A11, SHADER_STORAGE_BUFFER = 0x90D2, COPY_READ_BUFFER = 0x8F36, COPY_WRITE_BUFFER = 0x8F37;

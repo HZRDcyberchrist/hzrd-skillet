@@ -1223,7 +1223,11 @@ class Translator {
           const vt = this.glslType(vec(n, s))
           const F = argTs[0].k === 'vec' ? f : `${vt}(${f})`
           const TT = argTs[1].k === 'vec' ? tr : `${vt}(${tr})`
-          return `mix(${F}, ${TT}, ${c})`
+          // mix() on a bool vector selects for float types from GLSL 1.30,
+          // but for int/uint/bool only from 4.50; Resolume's context is 4.1.
+          if (concreteS(s) === 'f32') return `mix(${F}, ${TT}, ${c})`
+          this.needs.add('sel')
+          return `wg_sel(${F}, ${TT}, ${c})`
         }
         return `((${c}) ? (${tr}) : (${f}))`
       }
@@ -1620,6 +1624,16 @@ class Translator {
     if (this.needs.has('f2u')) {
       helpers.push('uint wg_f2u(float x) { return uint(clamp(x, 0.0, 4294967040.0)); }')
       for (const n of [2, 3, 4]) helpers.push(`uvec${n} wg_f2u(vec${n} x) { return uvec${n}(clamp(x, vec${n}(0.0), vec${n}(4294967040.0))); }`)
+    }
+    if (this.needs.has('sel')) {
+      const comps = ['x', 'y', 'z', 'w']
+      for (const p of ['i', 'u', 'b']) {
+        for (const n of [2, 3, 4]) {
+          const t = `${p}vec${n}`
+          const body = comps.slice(0, n).map(k => `c.${k} ? t.${k} : f.${k}`).join(', ')
+          helpers.push(`${t} wg_sel(${t} f, ${t} t, bvec${n} c) { return ${t}(${body}); }`)
+        }
+      }
     }
     if (this.needs.has('f2i')) {
       helpers.push('int wg_f2i(float x) { return int(clamp(x, -2147483648.0, 2147483520.0)); }')
