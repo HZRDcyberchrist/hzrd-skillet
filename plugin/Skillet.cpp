@@ -237,6 +237,9 @@ void Skillet::loadPreset(int index, bool cut) {
   if (index < 0 || index >= kNumPresets) return;
   currentPreset_ = index;
   values_[PT_PRESET] = static_cast<float>(index);
+  // Tell the host the dropdown's value moved, so Prev/Next/Random and the
+  // pads show the preset they landed on (FFGL value-change event).
+  RaiseParamEvent(PT_PRESET, FF_EVENT_FLAG_VALUE);
   if (!engine_) return;
   Controls to;
   const Preset& p = kPresets[index];

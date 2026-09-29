@@ -66,6 +66,17 @@ int main(int argc, char** argv) {
     } else if (cmd.rfind("press:", 0) == 0) {
       int p = findParam(cmd.c_str() + 6); if (p < 0) { printf("no param %s\n", cmd.c_str() + 6); return 1; }
       setf(id, p, 1.0f); setf(id, p, 0.0f); printf("pressed %s\n", cmd.c_str() + 6);
+    } else if (cmd == "events") {
+      // what a host polls after each frame: which parameters changed on their own
+      GetParamEventsStruct q{0, nullptr}; call(FF_GET_PARAMETER_EVENTS, ptr(&q), id);
+      std::vector<ParamEventStruct> ev(q.numEvents); GetParamEventsStruct g{q.numEvents, ev.data()};
+      call(FF_GET_PARAMETER_EVENTS, ptr(&g), id);
+      for (FFUInt32 k = 0; k < g.numEvents; k++) {
+        const char* pn = (const char*)call(FF_GET_PARAMETER_NAME, u(ev[k].ParameterNumber), nullptr).PointerValue;
+        FFMixed v = call(FF_GET_PARAMETER, u(ev[k].ParameterNumber), id); float fv; std::memcpy(&fv, &v.UIntValue, 4);
+        printf("event: %s flags=0x%llx value=%g\n", pn ? pn : "?", (unsigned long long)ev[k].eventFlags, fv);
+      }
+      if (g.numEvents == 0) puts("event: none");
     } else if (cmd.rfind("shot:", 0) == 0) {
       std::vector<uint8_t> o(W * H * 4); BindFramebuffer(FRAMEBUFFER, fbo); PixelStorei(PACK_ALIGNMENT, 1); ReadPixels(0, 0, W, H, RGBA, UNSIGNED_BYTE, o.data());
       FILE* w = fopen(cmd.c_str() + 5, "wb"); fprintf(w, "P6\n%d %d\n255\n", W, H);
