@@ -1,0 +1,4 @@
+build/
+test/*.ppm
+test/*.png
+test/*.rgba

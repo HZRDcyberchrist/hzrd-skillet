@@ -1,0 +1,48 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows DLL (Resolume)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --target SkilletNTSC
+      - name: Check the export Resolume looks for
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem -Recurse "$vs\VC\Tools\MSVC" -Filter dumpbin.exe | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
+          $exports = & $dumpbin.FullName /exports build\Release\SkilletNTSC.dll
+          $exports
+          if (-not ($exports -match 'plugMain')) { throw 'plugMain is not exported' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkilletNTSC-windows-x64
+          path: |
+            build/Release/SkilletNTSC.dll
+            README.md
+            LICENSE
+            THIRD_PARTY_NOTICES.md
+
+  linux-headless:
+    name: Headless render check (Mesa)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mesa
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libegl-mesa0 libgl1-mesa-dri python3-pil
+      - name: Build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2
+      - name: Run the plugin through plugMain
+        working-directory: test
+        run: |
+          python3 make_testcard.py
+          ../build/skillet_ffgl_host frames:3 "set:Preset=1" frames:10 shot:vhs.ppm "press:Pad 10" frames:10 shot:spiral.ppm
