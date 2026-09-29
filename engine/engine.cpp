@@ -123,13 +123,20 @@ unsigned Engine::compile(const char* name, GLenum stage, const char* src) {
 }
 
 bool Engine::buildPrograms() {
+  // Compile everything and report every failure at once: a driver that
+  // rejects one shader often rejects a few, and each round trip to find the
+  // next is a rebuild on someone else's machine.
   programs_.reset(new Program[kNumPrograms]);
+  std::string errors;
   for (int i = 0; i < kNumPrograms; i++) {
     const ShaderProgram& d = kPrograms[i];
     programs_[i].def = &d;
     if (std::strcmp(d.stage, "compute") != 0) continue;
     GLuint s = compile(d.name, COMPUTE_SHADER, d.src);
-    if (!s) return false;
+    if (!s) {
+      errors += error_ + "\n";
+      continue;
+    }
     GLuint p = CreateProgram();
     AttachShader(p, s);
     LinkProgram(p);
@@ -139,8 +146,9 @@ bool Engine::buildPrograms() {
     if (!okl) {
       char log[4096] = {};
       GetProgramInfoLog(p, sizeof log, nullptr, log);
-      error_ = std::string("link ") + d.name + ": " + log;
-      return false;
+      errors += std::string("link ") + d.name + ": " + log + "\n";
+      DeleteProgram(p);
+      continue;
     }
     programs_[i].id = p;
   }
@@ -148,23 +156,31 @@ bool Engine::buildPrograms() {
   const int vs = progIndex("present.vs");
   const int fs = progIndex("present.fs");
   GLuint sv = compile("present.vs", VERTEX_SHADER, kPrograms[vs].src);
-  GLuint sf = sv ? compile("present.fs", FRAGMENT_SHADER, kPrograms[fs].src) : 0;
-  if (!sv || !sf) return false;
-  GLuint p = CreateProgram();
-  AttachShader(p, sv);
-  AttachShader(p, sf);
-  LinkProgram(p);
-  DeleteShader(sv);
-  DeleteShader(sf);
-  GLint okl = 0;
-  GetProgramiv(p, LINK_STATUS, &okl);
-  if (!okl) {
-    char log[4096] = {};
-    GetProgramInfoLog(p, sizeof log, nullptr, log);
-    error_ = std::string("link present: ") + log;
+  if (!sv) errors += error_ + "\n";
+  GLuint sf = compile("present.fs", FRAGMENT_SHADER, kPrograms[fs].src);
+  if (!sf) errors += error_ + "\n";
+  if (sv && sf) {
+    GLuint p = CreateProgram();
+    AttachShader(p, sv);
+    AttachShader(p, sf);
+    LinkProgram(p);
+    GLint okl = 0;
+    GetProgramiv(p, LINK_STATUS, &okl);
+    if (!okl) {
+      char log[4096] = {};
+      GetProgramInfoLog(p, sizeof log, nullptr, log);
+      errors += std::string("link present: ") + log + "\n";
+      DeleteProgram(p);
+    } else {
+      programs_[fs].id = p;
+    }
+  }
+  if (sv) DeleteShader(sv);
+  if (sf) DeleteShader(sf);
+  if (!errors.empty()) {
+    error_ = errors;
     return false;
   }
-  programs_[fs].id = p;
   return true;
 }
 
@@ -282,6 +298,11 @@ bool Engine::build(GetProcFn getProc) {
     error_ = std::string("OpenGL function not available: ") + missing;
     return false;
   }
+  auto str = [](GLenum n) {
+    const GLubyte* s = GetString(n);
+    return s ? std::string(reinterpret_cast<const char*>(s)) : std::string("?");
+  };
+  glInfo_ = str(VENDOR) + " | " + str(RENDERER) + " | " + str(VERSION);
   GLint major = 0, minor = 0;
   GetIntegerv(0x821B, &major);  // GL_MAJOR_VERSION
   GetIntegerv(0x821C, &minor);  // GL_MINOR_VERSION

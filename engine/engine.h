@@ -38,6 +38,8 @@ class Engine {
 
   bool ok() const { return ok_; }
   const std::string& error() const { return error_; }
+  // vendor | renderer | version of the context the engine was built in
+  const std::string& glInfo() const { return glInfo_; }
 
   SignalChain& chain() { return *chain_; }
 
@@ -84,6 +86,7 @@ class Engine {
 
   bool ok_ = false;
   std::string error_;
+  std::string glInfo_;
   std::unique_ptr<SignalChain> chain_;
 
   // programs, indexed like kPrograms

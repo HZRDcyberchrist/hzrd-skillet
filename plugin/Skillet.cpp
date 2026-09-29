@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "../engine/engine.h"
@@ -53,7 +54,9 @@ enum : unsigned {
   // sixteen pads, each firing its own preset
   PT_PAD_PRESET0,
   PT_PAD0 = PT_PAD_PRESET0 + 16,
-  PT_COUNT = PT_PAD0 + 16,
+  // what the engine said when it started: "running on ..." or why not
+  PT_STATUS = PT_PAD0 + 16,
+  PT_COUNT,
 };
 static_assert(PT_COUNT <= 128, "values_ too small");
 
@@ -173,6 +176,28 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
     SetParamGroup(PT_PAD_PRESET0 + i, "Pads");
     SetParamGroup(PT_PAD0 + i, "Pads");
   }
+
+  SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
+  SetParamGroup(PT_STATUS, "Status");
+}
+
+// Everything the engine reported at startup, written where a user can find
+// it: Documents\SkilletNTSC-log.txt on Windows. A plugin that fails in a host
+// otherwise fails silently, and this is the only way to see why.
+static void writeLog(const std::string& text) {
+  std::string path;
+#if defined(_WIN32)
+  char buf[MAX_PATH] = {};
+  const DWORD n = GetEnvironmentVariableA("USERPROFILE", buf, MAX_PATH);
+  path = n > 0 && n < MAX_PATH ? std::string(buf) + "\\Documents\\SkilletNTSC-log.txt" : "SkilletNTSC-log.txt";
+#else
+  const char* home = std::getenv("HOME");
+  path = std::string(home ? home : ".") + "/SkilletNTSC-log.txt";
+#endif
+  if (FILE* f = std::fopen(path.c_str(), "wb")) {
+    std::fwrite(text.data(), 1, text.size(), f);
+    std::fclose(f);
+  }
 }
 
 Skillet::~Skillet() {}
@@ -185,10 +210,17 @@ FFResult Skillet::InitGL(const FFGLViewportStruct* vp) {
   const uint32_t seed = static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count());
   engine_.reset(new Engine(getProc, seed | 1u));
   if (!engine_->ok()) {
-    FFGLLog::LogToHost(("Skillet: " + engine_->error()).c_str());
+    status_ = "FAILED: " + engine_->error().substr(0, 400);
+    writeLog("Skillet NTSC could not start.\nOpenGL: " + engine_->glInfo() + "\n\n" + engine_->error());
+    FFGLLog::LogToHost(("Skillet NTSC: " + engine_->error()).c_str());
     engine_.reset();
-    return FF_FAIL;
+    RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
+    // Stay loaded so the Status field can say why; frames pass through.
+    return CFFGLPlugin::InitGL(vp);
   }
+  status_ = "Running on " + engine_->glInfo();
+  writeLog("Skillet NTSC started.\nOpenGL: " + engine_->glInfo() + "\n");
+  RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
   engine_->setCaption(caption_);
   loadPreset(currentPreset_, true);
   return CFFGLPlugin::InitGL(vp);
@@ -376,6 +408,7 @@ float Skillet::GetFloatParameter(unsigned int index) {
 }
 
 FFResult Skillet::SetTextParameter(unsigned int index, const char* value) {
+  if (index == PT_STATUS) return FF_SUCCESS;  // read-only: the plugin owns it
   if (index != PT_CAPTION || value == nullptr) return FF_FAIL;
   caption_ = value;
   if (engine_) engine_->setCaption(caption_);
@@ -383,6 +416,7 @@ FFResult Skillet::SetTextParameter(unsigned int index, const char* value) {
 }
 
 char* Skillet::GetTextParameter(unsigned int index) {
+  if (index == PT_STATUS) return const_cast<char*>(status_.c_str());
   if (index != PT_CAPTION) return nullptr;
   return const_cast<char*>(caption_.c_str());
 }

@@ -48,6 +48,7 @@ class Skillet : public CFFGLPlugin {
   float values_[128] = {};
   std::string caption_ = "VIDEO SKILLET";
   std::string display_;
+  std::string status_ = "Starting...";
   int currentPreset_ = 0;
   int pendingPreset_ = -1;
   bool pendingCut_ = false;

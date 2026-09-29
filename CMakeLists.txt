@@ -51,6 +51,7 @@ if(WIN32)
   )
   set_target_properties(SkilletNTSC PROPERTIES PREFIX "" OUTPUT_NAME "SkilletNTSC")
 elseif(UNIX AND NOT APPLE)
+  add_executable(skillet_dump_shaders test/dump_shaders.cpp)
   # Headless checks on Mesa: the engine harness and a minimal FFGL host that
   # loads the real plugin code through plugMain.
   find_library(EGL_LIB NAMES EGL libEGL.so.1 PATHS /usr/lib/x86_64-linux-gnu)
