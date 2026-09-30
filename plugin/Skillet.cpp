@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "../engine/engine.h"
-#include "relic.h"
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -61,37 +60,14 @@ enum : unsigned {
   PT_FILL,
   PT_RESET,
   PT_CAPTION,
+#if SKILLET_MIXER
+  PT_SWAP,  // which of the host's two inputs is this layer
+#endif
   // sixteen pads, each firing its own preset
   PT_PAD_PRESET0,
   PT_PAD0 = PT_PAD_PRESET0 + 16,
-  // more sources: which Spout sender, the pattern image, generator motion
-  PT_SPOUT = PT_PAD0 + 16,
-  PT_PATTERN_FILE,
-  PT_PATTERN_TILES,
-  PT_GEN_DRIFT,
-  // Rose window: the face wrapped into a disc
-  PT_ROSE,
-  PT_ROSE_FOLDS,
-  PT_ROSE_SPIN,
-  PT_ROSE_LOOP,
-  // Shroud: burned-in ghosts
-  PT_SHROUD,
-  PT_BURN,
-  PT_AUTOBURN,
-  PT_AFTERGLOW,
-  PT_CLEAR_SHROUD,
-  // Vigil: candlelight on the supply and the glass
-  PT_VIGIL,
-  PT_WIND,
-  // Confessional: slot B bleeding in as a ghost station
-  PT_GHOST,
-  PT_GHOST_DRIFT,
-  // Signal to STL
-  PT_RELIC,
   // what the engine said when it started: "running on ..." or why not
-  PT_STATUS,
-  // mixer only: which of the host's two inputs is this layer
-  PT_SWAP,
+  PT_STATUS = PT_PAD0 + 16,
   PT_COUNT,
 };
 static_assert(PT_COUNT <= 128, "values_ too small");
@@ -113,23 +89,20 @@ constexpr bool kMixer = false;
 #endif
 
 // What a source slot can show besides the engine's own generators.
-enum Pic : int { PIC_LAYER, PIC_BELOW, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL, PIC_PATTERN, PIC_SPOUT };
+enum Pic : int { PIC_LAYER, PIC_BELOW, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL };
 
-// Source A: 0 layer, 1-3 the app's generators, then ours
+// Source A: 0 layer, 1-3 the app's generators, then tracery and (mixer) the layers below
 static const char* const kSourceANames[] = {"Layer", "TV static", "Blank-tape static", "Video synth",
                                             "Tracery: rose window", "Tracery: lancet arcade", "Tracery: quatrefoil",
-                                            "Pattern image", "Spout", "Layers below"};
-static const int kSourceAPic[] = {PIC_LAYER, -1, -1, -1, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL, PIC_PATTERN, PIC_SPOUT, PIC_BELOW};
-constexpr int kNumSourceA = kMixer ? 10 : 9;
+                                            "Layers below"};
+static const int kSourceAPic[] = {PIC_LAYER, -1, -1, -1, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL, PIC_BELOW};
+constexpr int kNumSourceA = kMixer ? 8 : 7;
 // Source B: 0 auto, 1 off, 2-4 the app's generators, 5 bars, then pictures
 static const char* const kSourceBNames[] = {"Auto", "Off", "TV static", "Blank-tape static", "Video synth", "Color bars",
                                             kMixer ? "Layer" : "Layer copy", "Tracery: rose window",
-                                            "Tracery: lancet arcade", "Tracery: quatrefoil", "Pattern image", "Spout",
-                                            "Layers below"};
-static const int kSourceBPic[] = {-1, -1, -1, -1, -1, -1, PIC_LAYER, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL, PIC_PATTERN, PIC_SPOUT, PIC_BELOW};
-constexpr int kNumSourceB = kMixer ? 13 : 12;
-static const char* const kFoldNames[] = {"Off", "4", "6", "8", "12", "16"};
-static const int kFolds[] = {0, 4, 6, 8, 12, 16};
+                                            "Tracery: lancet arcade", "Tracery: quatrefoil", "Layers below"};
+static const int kSourceBPic[] = {-1, -1, -1, -1, -1, -1, PIC_LAYER, PIC_ROSE, PIC_LANCET, PIC_QUATREFOIL, PIC_BELOW};
+constexpr int kNumSourceB = kMixer ? 11 : 10;
 // A spread across the catalogue for the pads' starting assignment.
 static const char* const kPadDefaults[16] = {"vhs", "wornTape", "trackingBand", "pictureSearch", "fringeReception",
                                              "scrambledChannel", "fullCollapse", "bentScan", "mixerLoop", "spiral",
@@ -316,6 +289,10 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_RESET, "Reset signal", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_CAPTION, "Caption", FF_TYPE_TEXT, caption_.c_str());
   for (unsigned p : {PT_SOURCE_A, PT_SOURCE_B, PT_MIRROR, PT_FILL, PT_RESET, PT_CAPTION}) SetParamGroup(p, "Sources");
+#if SKILLET_MIXER
+  SetParamInfo(PT_SWAP, "Swap inputs", FF_TYPE_BOOLEAN, 0.0f);
+  SetParamGroup(PT_SWAP, "Sources");
+#endif
 
   // Pads
   for (int i = 0; i < 16; i++) {
@@ -327,60 +304,8 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
     SetParamGroup(PT_PAD0 + i, "Pads");
   }
 
-  // More sources
-  SetOptionParamInfo(PT_SPOUT, "Spout sender", 1, 0);
-  SetParamElementInfo(PT_SPOUT, 0, SpoutSource::available() ? "(first one running)" : "(Spout is Windows only)", 0);
-  SetFileParamInfo(PT_PATTERN_FILE, "Pattern file", {"png", "jpg", "jpeg", "bmp", "tga"}, "");
-  SetParamInfo(PT_PATTERN_TILES, "Pattern tiles", FF_TYPE_STANDARD, 2.0f);
-  SetParamRange(PT_PATTERN_TILES, 1, 12);
-  values_[PT_PATTERN_TILES] = 2.0f;
-  SetParamInfo(PT_GEN_DRIFT, "Generator drift", FF_TYPE_STANDARD, 0.3f);
-  values_[PT_GEN_DRIFT] = 0.3f;
-  for (unsigned p : {PT_SPOUT, PT_PATTERN_FILE, PT_PATTERN_TILES, PT_GEN_DRIFT}) SetParamGroup(p, "Sources");
-
-  // Rose window
-  SetParamInfo(PT_ROSE, "Rose window", FF_TYPE_STANDARD, 0.0f);
-  SetOptionParamInfo(PT_ROSE_FOLDS, "Rose folds", 6, 3);
-  for (int i = 0; i < 6; i++) SetParamElementInfo(PT_ROSE_FOLDS, i, kFoldNames[i], static_cast<float>(i));
-  values_[PT_ROSE_FOLDS] = 3;  // 8
-  SetParamInfo(PT_ROSE_SPIN, "Rose spin", FF_TYPE_STANDARD, 0.1f);
-  SetParamRange(PT_ROSE_SPIN, -1, 1);
-  values_[PT_ROSE_SPIN] = 0.1f;
-  SetParamInfo(PT_ROSE_LOOP, "Rose in loop", FF_TYPE_BOOLEAN, 1.0f);
-  values_[PT_ROSE_LOOP] = 1.0f;
-  for (unsigned p = PT_ROSE; p <= PT_ROSE_LOOP; p++) SetParamGroup(p, "Rose window");
-
-  // Shroud
-  SetParamInfo(PT_SHROUD, "Shroud", FF_TYPE_STANDARD, 0.5f);
-  values_[PT_SHROUD] = 0.5f;
-  SetParamInfo(PT_BURN, "Burn in", FF_TYPE_EVENT, 0.0f);
-  SetParamInfo(PT_AUTOBURN, "Auto burn", FF_TYPE_STANDARD, 0.0f);
-  SetParamInfo(PT_AFTERGLOW, "Afterglow", FF_TYPE_STANDARD, 0.0f);
-  SetParamInfo(PT_CLEAR_SHROUD, "Clear shroud", FF_TYPE_EVENT, 0.0f);
-  for (unsigned p = PT_SHROUD; p <= PT_CLEAR_SHROUD; p++) SetParamGroup(p, "Shroud");
-
-  // Vigil
-  SetParamInfo(PT_VIGIL, "Vigil", FF_TYPE_STANDARD, 0.0f);
-  SetParamInfo(PT_WIND, "Draught", FF_TYPE_STANDARD, 0.3f);
-  values_[PT_WIND] = 0.3f;
-  for (unsigned p = PT_VIGIL; p <= PT_WIND; p++) SetParamGroup(p, "Vigil");
-
-  // Confessional
-  SetParamInfo(PT_GHOST, "Ghost station", FF_TYPE_STANDARD, 0.0f);
-  SetParamInfo(PT_GHOST_DRIFT, "Ghost drift", FF_TYPE_STANDARD, 0.3f);
-  values_[PT_GHOST_DRIFT] = 0.3f;
-  for (unsigned p = PT_GHOST; p <= PT_GHOST_DRIFT; p++) SetParamGroup(p, "Confessional");
-
-  SetParamInfo(PT_RELIC, "Signal to STL", FF_TYPE_EVENT, 0.0f);
-  SetParamGroup(PT_RELIC, "Relic");
-
   SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
   SetParamGroup(PT_STATUS, "Status");
-  if (kMixer) {
-    SetParamInfo(PT_SWAP, "Swap inputs", FF_TYPE_BOOLEAN, 0.0f);
-    SetParamGroup(PT_SWAP, "Sources");
-  }
-
   syncFavorites(true);
 }
 
@@ -469,13 +394,16 @@ FFResult Skillet::InitGL(const FFGLViewportStruct* vp) {
   status_ = "Running on " + engine_->glInfo();
   writeLog("Skillet NTSC started.\nOpenGL: " + engine_->glInfo() + "\n");
   RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
-  engine_->setCaption(caption_);
+  {
+    std::lock_guard<std::mutex> lock(captionMutex_);
+    engine_->setCaption(caption_);
+    captionDirty_ = false;
+  }
   loadPreset(currentPreset_, true);
   return CFFGLPlugin::InitGL(vp);
 }
 
 FFResult Skillet::DeInitGL() {
-  spout_.release();
   engine_.reset();
   return FF_SUCCESS;
 }
@@ -561,31 +489,6 @@ void Skillet::applyOverlay(void* p) const {
   if (cam > 0) c[C_fbMix] = std::max(c[C_fbMix], cam * 0.9);
   const double time = values_[PT_TIME];
   if (time < 1) c[C_timeScale] = c[C_timeScale] * time;
-  // Afterglow: phosphor persistence toward the tube's longest
-  const double glow = values_[PT_AFTERGLOW];
-  if (glow > 0) c[C_phosphor] = std::max(c[C_phosphor], 0.9 + 0.0995 * glow);
-  // Vigil: the supply breathes with the candle (HV sag swells and shrinks the
-  // raster, a draught rings it) and the glass glows warm
-  const double vigil = values_[PT_VIGIL];
-  if (vigil > 0) {
-    const double f = flame_;
-    c[C_hvSagUs] = spanClamp(C_hvSagUs, c[C_hvSagUs] + vigil * (18 + 30 * f));
-    c[C_hvRing] = std::max(c[C_hvRing], vigil * 0.25 * values_[PT_WIND]);
-    c[C_crtHalation] = spanClamp(C_crtHalation, c[C_crtHalation] + vigil * (1.0 + 0.6 * f));
-    c[C_crtGlow] = spanClamp(C_crtGlow, c[C_crtGlow] + vigil * 0.6);
-  }
-  // Confessional: slot B rides in unlocked and low, like a second station on
-  // the same channel: it rolls, slants and beats against A's colour
-  const double ghost = values_[PT_GHOST];
-  if (ghost > 0) {
-    const double drift = values_[PT_GHOST_DRIFT];
-    c[C_bGenlock] = 0;
-    c[C_bGain] = std::max(c[C_bGain], ghost * 0.6);
-    if (std::abs(c[C_bRollLps]) < 0.01) c[C_bRollLps] = 0.4 + drift * 8;
-    if (std::abs(c[C_bLineHz]) < 0.01) c[C_bLineHz] = 0.2 + drift * 4;
-    if (std::abs(c[C_bDetuneHz]) < 0.01) c[C_bDetuneHz] = 12 + drift * 240;
-    c[C_rfAdjacent] = std::max(c[C_rfAdjacent], ghost * 0.2);
-  }
   for (int i = 0; i < 4; i++) {
     const int t = static_cast<int>(values_[PT_ASSIGN_T0 + i] + 0.5f) - 1;
     if (t < 0 || t >= kNumControls) continue;
@@ -596,90 +499,25 @@ void Skillet::applyOverlay(void* p) const {
   }
 }
 
-// Smooth value noise over time, -1..1.
-static double tnoise(double t, double seed) {
-  auto h = [seed](double i) {
-    const double x = std::sin(i * 127.1 + seed * 311.7) * 43758.5453;
-    return x - std::floor(x);
-  };
-  const double i = std::floor(t), f = t - i;
-  const double u = f * f * (3 - 2 * f);
-  return (h(i) * (1 - u) + h(i + 1) * u) * 2 - 1;
-}
-
-// A candle: a quick flutter over a slow sway, and in a draught the odd gust
-// that pulls the flame down.
-static double candle(double s, double wind) {
-  double f = 0.55 * tnoise(s * 2.3, 1) + 0.3 * tnoise(s * 7.9, 2) + 0.15 * tnoise(s * 17.0, 3);
-  const double gust = tnoise(s * 0.45, 4);
-  if (gust > 0.35) f -= wind * (gust - 0.35) * 2.6;
-  return std::max(-1.0, std::min(1.0, f));
-}
-
-void Skillet::setStatus(const std::string& s) {
-  status_ = s;
-  RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
-}
-
-// The Spout sender dropdown follows what's running, checked about twice a second.
-void Skillet::refreshSpoutList(bool force) {
-  if (!SpoutSource::available()) return;
-  if (!force && ++spoutPoll_ < 30) return;
-  spoutPoll_ = 0;
-  std::vector<std::string> now = SpoutSource::senders();
-  if (!force && now == spoutNames_) return;
-  // keep the chosen sender chosen, by name, if it's still there
-  const int was = static_cast<int>(values_[PT_SPOUT] + 0.5f) - 1;
-  const std::string keep = was >= 0 && was < static_cast<int>(spoutNames_.size()) ? spoutNames_[was] : "";
-  spoutNames_ = now;
-  std::vector<std::string> names{"(first one running)"};
-  std::vector<float> vals{0};
-  float sel = 0;
-  for (size_t i = 0; i < now.size(); i++) {
-    names.push_back(now[i]);
-    vals.push_back(static_cast<float>(i + 1));
-    if (now[i] == keep) sel = static_cast<float>(i + 1);
-  }
-  SetParamElements(PT_SPOUT, names, vals, true);
-  values_[PT_SPOUT] = sel;
-  RaiseParamEvent(PT_SPOUT, FF_EVENT_FLAG_VALUE);
-}
-
 // The picture a source slot shows for anything that isn't one of the
 // engine's own generators.
-bool Skillet::pictureFor(int kind, int slot, const InputFrame& layer, const InputFrame& below, unsigned hostFbo,
-                         InputFrame& out) {
+bool Skillet::pictureFor(int kind, int slot, const InputFrame& layer, const InputFrame& below, InputFrame& out) {
   out = InputFrame();
   const double sec = nowMs() / 1000.0;
-  const float drift = values_[PT_GEN_DRIFT];
   switch (kind) {
     case PIC_LAYER: out = layer; return out.texture != 0;
     case PIC_BELOW: out = below; return out.texture != 0;
     case PIC_ROSE:
     case PIC_LANCET:
-    case PIC_QUATREFOIL:
-    case PIC_PATTERN: {
+    case PIC_QUATREFOIL: {
       const Generator g = kind == PIC_ROSE ? Generator::TraceryRose
                           : kind == PIC_LANCET ? Generator::TraceryLancet
-                          : kind == PIC_QUATREFOIL ? Generator::TraceryQuatrefoil
-                                                   : Generator::Pattern;
+                                               : Generator::TraceryQuatrefoil;
       int w = 0, h = 0;
-      out.texture = engine_->extras().drawGenerator(slot, g, sec, drift, values_[PT_PATTERN_TILES], w, h);
+      out.texture = engine_->extras().drawGenerator(slot, g, sec, 0.3f, w, h);
       out.width = out.hwWidth = w;
       out.height = out.hwHeight = h;
       out.bottomUp = true;
-      return true;
-    }
-    case PIC_SPOUT: {
-      const int sel = static_cast<int>(values_[PT_SPOUT] + 0.5f) - 1;
-      const std::string name = sel >= 0 && sel < static_cast<int>(spoutNames_.size()) ? spoutNames_[sel] : "";
-      unsigned tex = 0;
-      int w = 0, h = 0;
-      if (!spout_.receive(name, hostFbo, tex, w, h)) return false;
-      out.texture = tex;
-      out.width = out.hwWidth = w;
-      out.height = out.hwHeight = h;
-      out.bottomUp = false;  // Spout frames arrive top row first
       return true;
     }
   }
@@ -692,10 +530,14 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   for (unsigned i = 0; i < needInputs; i++)
     if (pGL->inputTextures[i] == nullptr) return FF_FAIL;
   syncFavorites(false);  // another instance may have changed the list
-  refreshSpoutList(false);
+  {
+    std::lock_guard<std::mutex> lock(captionMutex_);
+    if (captionDirty_) {
+      engine_->setCaption(caption_);
+      captionDirty_ = false;
+    }
+  }
   const double now = nowMs();
-  const double dt = lastMs_ < 0 ? 0 : std::min(250.0, now - lastMs_) / 1000.0;
-  lastMs_ = now;
   if (pendingReset_) {
     engine_->resetSignal();
     pendingReset_ = false;
@@ -704,12 +546,6 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
     loadPreset(pendingPreset_, pendingCut_);
     pendingPreset_ = -1;
   }
-  if (patternDirty_) {
-    patternDirty_ = false;
-    const std::string err = engine_->extras().loadPattern(patternPath_);
-    if (!err.empty()) setStatus("Pattern: " + err);
-  }
-
   // the host's inputs: in the mixer, one is this layer and one is the layers
   // below (Resolume's order is destination first; Swap inputs flips it)
   auto frameOf = [](const FFGLTextureStruct& t) {
@@ -723,13 +559,13 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
     return f;
   };
   InputFrame layer, below;
-  if (kMixer) {
-    const bool swap = values_[PT_SWAP] > 0.5f;
-    layer = frameOf(*pGL->inputTextures[swap ? 0 : 1]);
-    below = frameOf(*pGL->inputTextures[swap ? 1 : 0]);
-  } else {
-    layer = frameOf(*pGL->inputTextures[0]);
-  }
+#if SKILLET_MIXER
+  const bool swap = values_[PT_SWAP] > 0.5f;
+  layer = frameOf(*pGL->inputTextures[swap ? 0 : 1]);
+  below = frameOf(*pGL->inputTextures[swap ? 1 : 0]);
+#else
+  layer = frameOf(*pGL->inputTextures[0]);
+#endif
 
   // Source A
   const int srcA = std::max(0, std::min(kNumSourceA - 1, static_cast<int>(values_[PT_SOURCE_A] + 0.5f)));
@@ -738,16 +574,15 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
     engine_->setSourceA(srcA);  // the app's generators
   } else {
     engine_->setSourceA(0);
-    if (!pictureFor(kSourceAPic[srcA], 0, layer, below, pGL->HostFBO, inA)) inA = layer;
+    if (!pictureFor(kSourceAPic[srcA], 0, layer, below, inA)) inA = layer;
   }
-  // Source B. Auto feeds presets that mix two pictures (and the ghost
-  // station): the layers below in the mixer, the layer itself otherwise.
+  // Source B. Auto feeds presets that mix two pictures: the layers below in
+  // the mixer, the layer itself otherwise.
   const int srcB = std::max(0, std::min(kNumSourceB - 1, static_cast<int>(values_[PT_SOURCE_B] + 0.5f)));
   InputFrame inB = layer;
   SourceB b = SourceB::Off;
   if (srcB == 0) {
-    const bool wanted = kPresets[currentPreset_].needsB || values_[PT_GHOST] > 0;
-    if (wanted) {
+    if (kPresets[currentPreset_].needsB) {
       b = SourceB::LayerCopy;
       inB = kMixer ? below : layer;
     }
@@ -755,32 +590,10 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
     b = static_cast<SourceB>(srcB - 1);  // off, the generators, bars
   } else {
     b = SourceB::LayerCopy;
-    if (!pictureFor(kSourceBPic[srcB], 1, layer, below, pGL->HostFBO, inB)) b = SourceB::Off;
+    if (!pictureFor(kSourceBPic[srcB], 1, layer, below, inB)) b = SourceB::Off;
   }
   engine_->setSourceB(b);
   engine_->setMirror(values_[PT_MIRROR] > 0.5f);
-
-  // candle, rose turn and the face passes
-  flame_ = candle(now / 1000.0 * (0.6 + values_[PT_WIND] * 0.8), values_[PT_WIND]);
-  roseAngle_ = std::fmod(roseAngle_ + dt * values_[PT_ROSE_SPIN] * 0.6, 2 * 3.14159265358979);
-  PostSettings post;
-  post.rose = values_[PT_ROSE];
-  post.roseFolds = kFolds[std::max(0, std::min(5, static_cast<int>(values_[PT_ROSE_FOLDS] + 0.5f)))];
-  post.roseAngle = static_cast<float>(roseAngle_);
-  post.roseInLoop = values_[PT_ROSE_LOOP] > 0.5f;
-  post.shroud = values_[PT_SHROUD];
-  post.autoBurn = values_[PT_AUTOBURN];
-  post.vigil = values_[PT_VIGIL];
-  post.flame = static_cast<float>(flame_);
-  engine_->setPost(post);
-  if (pendingClear_) {
-    engine_->clearShroud();
-    pendingClear_ = false;
-  }
-  if (pendingBurn_) {
-    engine_->burnIn();
-    pendingBurn_ = false;
-  }
 
   OutputTarget out;
   out.fbo = pGL->HostFBO;
@@ -794,18 +607,11 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   ch.overlay = [this](Controls& c) { applyOverlay(&c); };
   engine_->render(inA, inB, out, now);
 
-  if (pendingRelic_) {
-    pendingRelic_ = false;
-    std::vector<float> wave;
-    engine_->captureComposite(wave);
-    const std::string base = relic::castAsync(std::move(wave));
-    setStatus("Relic saved: " + base + ".stl (+ .png heightmap)");
-  }
   return FF_SUCCESS;
 }
 
 FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
-  if (index >= PT_COUNT || (index == PT_SWAP && !kMixer)) return FF_FAIL;
+  if (index >= PT_COUNT) return FF_FAIL;
   const float prev = values_[index];
   values_[index] = value;
   const bool pressed = value > 0.5f && prev <= 0.5f;
@@ -872,15 +678,6 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
     case PT_RESET:
       if (pressed) pendingReset_ = true;
       break;
-    case PT_BURN:
-      if (pressed) pendingBurn_ = true;
-      break;
-    case PT_CLEAR_SHROUD:
-      if (pressed) pendingClear_ = true;
-      break;
-    case PT_RELIC:
-      if (pressed) pendingRelic_ = true;
-      break;
     default:
       if (index >= PT_PAD0 && index < PT_PAD0 + 16 && pressed) {
         const int slot = static_cast<int>(index - PT_PAD0);
@@ -903,22 +700,19 @@ float Skillet::GetFloatParameter(unsigned int index) {
 
 FFResult Skillet::SetTextParameter(unsigned int index, const char* value) {
   if (index == PT_STATUS) return FF_SUCCESS;  // read-only: the plugin owns it
-  if (index == PT_PATTERN_FILE) {
-    patternPath_ = value ? value : "";
-    patternDirty_ = true;
-    return FF_SUCCESS;
-  }
   if (index != PT_CAPTION || value == nullptr) return FF_FAIL;
+  std::lock_guard<std::mutex> lock(captionMutex_);
   caption_ = value;
-  if (engine_) engine_->setCaption(caption_);
+  captionDirty_ = true;
   return FF_SUCCESS;
 }
 
 char* Skillet::GetTextParameter(unsigned int index) {
   if (index == PT_STATUS) return const_cast<char*>(status_.c_str());
-  if (index == PT_PATTERN_FILE) return const_cast<char*>(patternPath_.c_str());
   if (index != PT_CAPTION) return nullptr;
-  return const_cast<char*>(caption_.c_str());
+  std::lock_guard<std::mutex> lock(captionMutex_);
+  captionShown_ = caption_;
+  return const_cast<char*>(captionShown_.c_str());
 }
 
 char* Skillet::GetParameterDisplay(unsigned int index) {

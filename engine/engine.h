@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "chain.h"
 #include "extras.h"
@@ -58,17 +57,11 @@ class Engine {
   // the caller had.
   void render(const InputFrame& in, const OutputTarget& out, double nowMs) { render(in, in, out, nowMs); }
   // `inB` is the picture Source B's "layer copy" takes (the layer itself, the
-  // layers below in the mixer, a Spout sender or a generator).
+  // layers below in the mixer, or a tracery generator).
   void render(const InputFrame& in, const InputFrame& inB, const OutputTarget& out, double nowMs);
 
-  // Generators and the face passes (extras.h)
+  // The tracery generators (extras.h)
   Extras& extras() { return extras_; }
-  void setPost(const PostSettings& p) { post_ = p; }
-  void burnIn() { burnReq_ = true; }
-  void clearShroud() { clearReq_ = true; }
-  // The composite waveform as it stands (525 lines x 910 samples, IRE-scaled
-  // volts), for Signal to STL.
-  void captureComposite(std::vector<float>& out);
 
   // Clears every buffer and texture the path carries state in (the tape ring,
   // phosphor, the frame store, the sync flywheel) and restarts the CPU state.
@@ -126,8 +119,6 @@ class Engine {
   uint32_t renderedFrames_ = 0;
   bool haveFace_ = false;
   Extras extras_;
-  PostSettings post_;
-  bool burnReq_ = false, clearReq_ = false;
 };
 
 } // namespace skillet

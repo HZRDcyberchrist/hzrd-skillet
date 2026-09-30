@@ -17,10 +17,9 @@
 
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-
-#include "spout_source.h"
 
 namespace skillet {
 class Engine;
@@ -50,14 +49,17 @@ class Skillet : public CFFGLPlugin {
   void syncFavorites(bool force);
   void syncFavoriteValue();
   bool pictureFor(int kind, int slot, const skillet::InputFrame& layer, const skillet::InputFrame& below,
-                  unsigned hostFbo, skillet::InputFrame& out);
-  void refreshSpoutList(bool force);
-  void setStatus(const std::string& s);
+                  skillet::InputFrame& out);
 
   std::unique_ptr<skillet::Engine> engine_;
   std::chrono::steady_clock::time_point t0_;
   float values_[128] = {};
+  // Resolume can set text from its interface thread; the render thread picks
+  // it up at the next frame, so the engine is only touched with GL current.
   std::string caption_ = "VIDEO SKILLET";
+  std::mutex captionMutex_;
+  bool captionDirty_ = false;
+  std::string captionShown_;  // what GetTextParameter hands the host
   std::string display_;
   std::string status_ = "Starting...";
   int currentPreset_ = 0;
@@ -66,14 +68,6 @@ class Skillet : public CFFGLPlugin {
   bool pendingReset_ = false;
   unsigned rng_ = 0x2545F491u;
   unsigned nextRandom();
-  std::string patternPath_;
-  bool patternDirty_ = false;
-  bool pendingBurn_ = false, pendingClear_ = false, pendingRelic_ = false;
-  double roseAngle_ = 0, lastMs_ = -1;
-  double flame_ = 0;  // the candle's flicker this frame, -1..1
-  SpoutSource spout_;
-  std::vector<std::string> spoutNames_;
-  int spoutPoll_ = 0;
   std::vector<int> favs_;       // this instance's copy of the shared favorites
   unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
 };

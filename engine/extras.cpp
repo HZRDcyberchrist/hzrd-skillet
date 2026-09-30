@@ -1,17 +1,9 @@
-// Generators and face passes for the Resolume port. See extras.h.
+// Tracery generators for the Resolume port. See extras.h.
 #include "extras.h"
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
-
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_BMP
-#define STBI_ONLY_TGA
-#define STBI_NO_STDIO_WIN32_UTF8_DEFAULT
-#include "../third_party/stb/stb_image.h"
 
 #include "signal.h"
 
@@ -178,88 +170,6 @@ void main() {
 }
 )GLSL";
 
-static const char* kPatternFs = R"GLSL(#version 410 core
-in vec2 vUv;
-out vec4 o;
-uniform sampler2D img;
-uniform float t;
-uniform float drift;
-uniform float aspect;
-uniform float imgAspect;
-uniform float tiles;
-void main() {
-  vec2 p = vec2(vUv.x * aspect / imgAspect, vUv.y) * tiles + t * drift * vec2(0.03, 0.02);
-  o = vec4(texture(img, p).rgb, 1.0);
-}
-)GLSL";
-
-// ── Rose: the face wrapped into a disc ──
-static const char* kRoseFs = R"GLSL(#version 410 core
-in vec2 vUv;
-out vec4 o;
-uniform sampler2D face;
-uniform float amount;
-uniform float folds;
-uniform float angle;
-const float PI = 3.14159265;
-void main() {
-  vec2 p = (vUv - 0.5) * vec2(4.0 / 3.0, 1.0);
-  float r = length(p) / 0.5;
-  float th = atan(p.y, p.x) + angle;
-  float x;
-  if (folds > 0.5) {
-    // mirrored sectors: each one holds the frame's width twice, flipped
-    float sector = 2.0 * PI / folds;
-    float a = mod(th, sector);
-    a = min(a, sector - a);
-    x = a / (sector * 0.5);
-  } else {
-    x = fract(th / (2.0 * PI) + 1.0);
-  }
-  vec2 polar = vec2(x, clamp(r, 0.0, 1.0));
-  vec2 uv = mix(vUv, polar, amount);
-  float edge = mix(1.0, smoothstep(1.0, 0.96, r), amount);
-  o = vec4(texture(face, uv).rgb * edge, 1.0);
-}
-)GLSL";
-
-static const char* kBurnFs = R"GLSL(#version 410 core
-in vec2 vUv;
-out vec4 o;
-uniform sampler2D face;
-uniform float weight;
-void main() { o = vec4(texture(face, vUv).rgb, weight); }
-)GLSL";
-
-// ── Finish: shroud and vigil over the face ──
-static const char* kFinishFs = R"GLSL(#version 410 core
-in vec2 vUv;
-out vec4 o;
-uniform sampler2D face;
-uniform sampler2D shroud;
-uniform float level;
-uniform float vigil;
-uniform float flame;
-void main() {
-  vec3 c = texture(face, vUv).rgb;
-  // the ghost: a softened, linen-toned luminance of everything burned in
-  vec2 px = vec2(1.0 / 754.0, 1.0 / 480.0);
-  vec3 s = texture(shroud, vUv).rgb * 0.4;
-  s += (texture(shroud, vUv + vec2(px.x, 0)).rgb + texture(shroud, vUv - vec2(px.x, 0)).rgb +
-        texture(shroud, vUv + vec2(0, px.y)).rgb + texture(shroud, vUv - vec2(0, px.y)).rgb) * 0.15;
-  float l = dot(s, vec3(0.299, 0.587, 0.114));
-  vec3 tone = l * vec3(1.0, 0.84, 0.62);
-  c = 1.0 - (1.0 - c) * (1.0 - clamp(tone * level, 0.0, 1.0));
-  // vigil: candle-lit, warm, breathing at the edges
-  vec2 d = vUv - 0.5;
-  float fall = 1.0 - (0.55 + 0.25 * flame) * dot(d, d) * 2.2;
-  float dim = (0.78 + 0.18 * flame) * fall;
-  vec3 warm = c * vec3(1.08, 0.88, 0.66);
-  c = mix(c, warm * dim, vigil);
-  o = vec4(clamp(c, 0.0, 1.0), 1.0);
-}
-)GLSL";
-
 static unsigned compileStage(GLenum stage, const char* src, std::string& log) {
   GLuint s = CreateShader(stage);
   ShaderSource(s, 1, &src, nullptr);
@@ -325,46 +235,23 @@ constexpr int GEN_W = 1024, GEN_H = 768;
 bool Extras::init(std::string& error) {
   std::string e;
   progTracery_ = program("tracery", kTraceryFs, e);
-  progPattern_ = program("pattern", kPatternFs, e);
-  progRose_ = program("rose", kRoseFs, e);
-  progBurn_ = program("burn", kBurnFs, e);
-  progFinish_ = program("finish", kFinishFs, e);
   if (!e.empty()) {
     error = e;
     return false;
   }
   GenVertexArrays(1, &vao_);
   GenFramebuffers(1, &fbo_);
-  GenSamplers(1, &sampler_);
-  SamplerParameteri(sampler_, TEXTURE_MIN_FILTER, LINEAR);
-  SamplerParameteri(sampler_, TEXTURE_MAG_FILTER, LINEAR);
-  SamplerParameteri(sampler_, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
-  SamplerParameteri(sampler_, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
-  GenSamplers(1, &repeatSampler_);
-  SamplerParameteri(repeatSampler_, TEXTURE_MIN_FILTER, LINEAR);
-  SamplerParameteri(repeatSampler_, TEXTURE_MAG_FILTER, LINEAR);
-  SamplerParameteri(repeatSampler_, TEXTURE_WRAP_S, REPEAT);
-  SamplerParameteri(repeatSampler_, TEXTURE_WRAP_T, REPEAT);
   genTex_[0] = makeTex(GEN_W, GEN_H, RGBA8);
   genTex_[1] = makeTex(GEN_W, GEN_H, RGBA8);
-  roseTex_ = makeTex(ACTIVE_WIDTH, ACTIVE_HEIGHT, RGBA8);
-  shroudTex_ = makeTex(ACTIVE_WIDTH, ACTIVE_HEIGHT, RGBA16F);
-  displayTex_ = makeTex(ACTIVE_WIDTH, ACTIVE_HEIGHT, RGBA8);
-  clearShroud();
   return true;
 }
 
 void Extras::destroy() {
-  GLuint progs[] = {progTracery_, progPattern_, progRose_, progBurn_, progFinish_};
-  for (GLuint p : progs)
-    if (p) DeleteProgram(p);
-  GLuint texs[] = {genTex_[0], genTex_[1], patternTex_, roseTex_, shroudTex_, displayTex_};
-  for (GLuint t : texs)
+  if (progTracery_) DeleteProgram(progTracery_);
+  for (GLuint t : genTex_)
     if (t) DeleteTextures(1, &t);
   if (vao_) DeleteVertexArrays(1, &vao_);
   if (fbo_) DeleteFramebuffers(1, &fbo_);
-  if (sampler_) DeleteSamplers(1, &sampler_);
-  if (repeatSampler_) DeleteSamplers(1, &repeatSampler_);
   *this = Extras();
 }
 
@@ -383,130 +270,19 @@ void Extras::drawInto(unsigned tex, int w, int h) {
   BindFramebuffer(FRAMEBUFFER, 0);
 }
 
-static void bindTex(unsigned unit, unsigned tex, unsigned sampler) {
-  ActiveTexture(TEXTURE0 + unit);
-  BindTexture(TEXTURE_2D, tex);
-  BindSampler(unit, sampler);
-}
-
-unsigned Extras::drawGenerator(int slot, Generator g, double seconds, float drift, float tiles, int& w, int& h) {
+unsigned Extras::drawGenerator(int slot, Generator g, double seconds, float drift, int& w, int& h) {
   w = GEN_W;
   h = GEN_H;
   const unsigned dst = genTex_[slot & 1];
-  const float t = static_cast<float>(std::fmod(seconds, 3600.0));
-  if (g == Generator::Pattern) {
-    if (!patternTex_) {
-      // nothing loaded yet: a plain dark ground
-      BindFramebuffer(FRAMEBUFFER, fbo_);
-      FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, dst, 0);
-      ClearColor(0.05f, 0.05f, 0.05f, 1);
-      Clear(COLOR_BUFFER_BIT);
-      FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, 0, 0);
-      BindFramebuffer(FRAMEBUFFER, 0);
-      return dst;
-    }
-    UseProgram(progPattern_);
-    bindTex(0, patternTex_, repeatSampler_);
-    Uniform1i(GetUniformLocation(progPattern_, "img"), 0);
-    Uniform1f(GetUniformLocation(progPattern_, "t"), t);
-    Uniform1f(GetUniformLocation(progPattern_, "drift"), drift);
-    Uniform1f(GetUniformLocation(progPattern_, "aspect"), static_cast<float>(GEN_W) / GEN_H);
-    Uniform1f(GetUniformLocation(progPattern_, "imgAspect"), static_cast<float>(patternW_) / patternH_);
-    Uniform1f(GetUniformLocation(progPattern_, "tiles"), tiles);
-  } else {
-    UseProgram(progTracery_);
-    const int mode = g == Generator::TraceryRose ? 1 : g == Generator::TraceryLancet ? 2 : 3;
-    Uniform1i(GetUniformLocation(progTracery_, "mode"), mode);
-    Uniform1f(GetUniformLocation(progTracery_, "t"), t);
-    Uniform1f(GetUniformLocation(progTracery_, "drift"), drift);
-    Uniform1f(GetUniformLocation(progTracery_, "aspect"), static_cast<float>(GEN_W) / GEN_H);
-  }
+  UseProgram(progTracery_);
+  const int mode = g == Generator::TraceryRose ? 1 : g == Generator::TraceryLancet ? 2 : 3;
+  Uniform1i(GetUniformLocation(progTracery_, "mode"), mode);
+  Uniform1f(GetUniformLocation(progTracery_, "t"), static_cast<float>(std::fmod(seconds, 3600.0)));
+  Uniform1f(GetUniformLocation(progTracery_, "drift"), drift);
+  Uniform1f(GetUniformLocation(progTracery_, "aspect"), static_cast<float>(GEN_W) / GEN_H);
   drawInto(dst, GEN_W, GEN_H);
   UseProgram(0);
-  bindTex(0, 0, 0);
   return dst;
-}
-
-std::string Extras::loadPattern(const std::string& path) {
-  if (patternTex_) {
-    DeleteTextures(1, &patternTex_);
-    patternTex_ = 0;
-  }
-  if (path.empty()) return "";
-  int w = 0, h = 0, n = 0;
-  stbi_set_flip_vertically_on_load(1);  // GL rows run bottom-up
-  unsigned char* px = stbi_load(path.c_str(), &w, &h, &n, 4);
-  if (!px) return std::string("could not read ") + path + " (" + stbi_failure_reason() + ")";
-  patternTex_ = makeTex(w, h, RGBA8);
-  BindTexture(TEXTURE_2D, patternTex_);
-  PixelStorei(UNPACK_ALIGNMENT, 1);
-  TexSubImage2D(TEXTURE_2D, 0, 0, 0, w, h, RGBA, UNSIGNED_BYTE, px);
-  PixelStorei(UNPACK_ALIGNMENT, 4);
-  BindTexture(TEXTURE_2D, 0);
-  stbi_image_free(px);
-  patternW_ = w;
-  patternH_ = h;
-  return "";
-}
-
-void Extras::roseInto(unsigned face, unsigned dst, const PostSettings& s) {
-  UseProgram(progRose_);
-  bindTex(0, face, sampler_);
-  Uniform1i(GetUniformLocation(progRose_, "face"), 0);
-  Uniform1f(GetUniformLocation(progRose_, "amount"), s.rose);
-  Uniform1f(GetUniformLocation(progRose_, "folds"), static_cast<float>(s.roseFolds));
-  Uniform1f(GetUniformLocation(progRose_, "angle"), s.roseAngle);
-  drawInto(dst, ACTIVE_WIDTH, ACTIVE_HEIGHT);
-  UseProgram(0);
-  bindTex(0, 0, 0);
-}
-
-void Extras::burn(unsigned face, float weight) {
-  if (weight <= 0) return;
-  UseProgram(progBurn_);
-  bindTex(0, face, sampler_);
-  Uniform1i(GetUniformLocation(progBurn_, "face"), 0);
-  Uniform1f(GetUniformLocation(progBurn_, "weight"), std::min(1.0f, weight));
-  Enable(BLEND);
-  BlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA);
-  drawInto(shroudTex_, ACTIVE_WIDTH, ACTIVE_HEIGHT);
-  Disable(BLEND);
-  UseProgram(0);
-  bindTex(0, 0, 0);
-}
-
-// Each press joins a running average of every press so far, so the shroud
-// holds all of them equally (the first press fills it outright). Past 48
-// presses each new one still counts for a forty-eighth.
-void Extras::burnIn(unsigned face) {
-  burn(face, 1.0f / static_cast<float>(std::min(burns_, 47) + 1));
-  burns_++;
-}
-
-void Extras::clearShroud() {
-  BindFramebuffer(FRAMEBUFFER, fbo_);
-  FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, shroudTex_, 0);
-  ClearColor(0, 0, 0, 0);
-  Clear(COLOR_BUFFER_BIT);
-  FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, 0, 0);
-  BindFramebuffer(FRAMEBUFFER, 0);
-  burns_ = 0;
-}
-
-unsigned Extras::finish(unsigned src, const PostSettings& s) {
-  UseProgram(progFinish_);
-  bindTex(0, src, sampler_);
-  bindTex(1, shroudTex_, sampler_);
-  Uniform1i(GetUniformLocation(progFinish_, "face"), 0);
-  Uniform1i(GetUniformLocation(progFinish_, "shroud"), 1);
-  Uniform1f(GetUniformLocation(progFinish_, "level"), s.shroud);
-  Uniform1f(GetUniformLocation(progFinish_, "vigil"), s.vigil);
-  Uniform1f(GetUniformLocation(progFinish_, "flame"), s.flame);
-  drawInto(displayTex_, ACTIVE_WIDTH, ACTIVE_HEIGHT);
-  UseProgram(0);
-  bindTex(1, 0, 0);
-  bindTex(0, 0, 0);
-  return displayTex_;
 }
 
 } // namespace skillet

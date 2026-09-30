@@ -34,17 +34,8 @@ set_target_properties(skillet_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ── the FFGL plugins ──
 # Two DLLs from one source: the effect (one input) and the mixer (two inputs,
 # so Resolume hands it the layers below as well as the layer).
-set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/relic.cpp plugin/spout_source.cpp)
+set(PLUGIN_SOURCES plugin/Skillet.cpp)
 if(WIN32)
-  # Spout2 (BSD) for receiving any Spout sender, including Resolume Arena's
-  # own layer outputs, as a source.
-  file(GLOB SPOUT_SOURCES third_party/spout/*.cpp)
-  add_library(skillet_spout STATIC ${SPOUT_SOURCES})
-  target_include_directories(skillet_spout PUBLIC third_party/spout)
-  target_compile_definitions(skillet_spout PUBLIC SPOUT_BUILD_STATIC PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
-  target_compile_options(skillet_spout PRIVATE /W1 /utf-8)
-  target_link_libraries(skillet_spout PUBLIC opengl32 d3d9 d3d11 dxgi winmm version shlwapi comctl32 psapi)
-
   foreach(variant IN ITEMS effect mixer)
     if(variant STREQUAL "mixer")
       set(tgt SkilletNTSC-Mixer)
@@ -61,14 +52,13 @@ if(WIN32)
       ${FFGL_DIR}/source/lib/ffgl
       ${GLEW_DIR}/include
     )
-    target_compile_definitions(${tgt} PRIVATE GLEW_STATIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS SKILLET_SPOUT=1)
+    target_compile_definitions(${tgt} PRIVATE GLEW_STATIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
     if(variant STREQUAL "mixer")
       target_compile_definitions(${tgt} PRIVATE SKILLET_MIXER=1)
     endif()
     target_compile_options(${tgt} PRIVATE /W3 /utf-8)
     target_link_libraries(${tgt} PRIVATE
       skillet_engine
-      skillet_spout
       ${GLEW_DIR}/lib/Release/x64/glew32s.lib
       opengl32
     )

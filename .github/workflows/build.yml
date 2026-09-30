@@ -61,6 +61,5 @@ jobs:
         run: |
           python3 make_testcard.py
           ../build/skillet_ffgl_host frames:3 "set:Preset=1" frames:10 shot:vhs.ppm "press:Pad 10" frames:10 shot:spiral.ppm \
-            "set:Source A=4" "set:Rose window=1" "set:Vigil=1" "press:Burn in" "set:Shroud=1" frames:8 shot:extras.ppm \
-            "press:Signal to STL" frames:1 status sleep:3000
-          ../build/skillet_ffgl_host_mixer frames:2 "set:Ghost station=1" frames:10 shot:ghost.ppm "set:Source A=9" frames:4 shot:below.ppm
+            "set:Source A=4" frames:8 shot:tracery.ppm
+          ../build/skillet_ffgl_host_mixer frames:2 "set:Source A=7" frames:4 shot:below.ppm

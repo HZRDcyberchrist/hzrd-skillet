@@ -86,6 +86,21 @@ int main(int argc, char** argv) {
       int p = findParam(name.c_str()); if (p < 0) { printf("no param %s\n", name.c_str()); return 1; }
       SetParameterStruct st; st.ParameterNumber = p; st.NewParameterValue.PointerValue = const_cast<char*>(val.c_str());
       call(FF_SET_PARAMETER, ptr(&st), id); printf("text %s=%s\n", name.c_str(), val.c_str());
+    } else if (cmd.rfind("captionstorm:", 0) == 0) {
+      // another thread edits the caption while this one renders, the way a
+      // host's interface thread can
+      int p = findParam("Caption"); int n = atoi(cmd.c_str() + 13);
+      std::thread ui([&, p, n] {
+        for (int k = 0; k < n; k++) {
+          std::string v = k % 3 == 0 ? "" : std::string(k % 40 + 1, 'A' + k % 26) + (k % 5 == 0 ? "\nSECOND LINE" : "");
+          SetParameterStruct st; st.ParameterNumber = p; st.NewParameterValue.PointerValue = const_cast<char*>(v.c_str());
+          call(FF_SET_PARAMETER, ptr(&st), id);
+          call(FF_GET_PARAMETER, u(p), id);
+          std::this_thread::sleep_for(std::chrono::microseconds(300));
+        }
+      });
+      for (int j = 0; j < 60; j++) { BindFramebuffer(FRAMEBUFFER, fbo); Viewport(0, 0, W, H); call(FF_PROCESS_OPENGL, ptr(&pgl), id); }
+      ui.join(); printf("caption storm of %d edits survived\n", n);
     } else if (cmd == "status") {
       int p = findParam("Status"); const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
       printf("status: %s\n", t ? t : "");

@@ -27,7 +27,7 @@ The DLLs land in `build\Release`.
 2. Restart Resolume.
 3. Drag **Skillet NTSC** from the Effects browser onto a layer or clip.
 
-**Skillet NTSC Mix** is the same thing as a mixer: it takes two pictures, this layer and the layers below it, so the layers below can be a source (and the Confessional ghost station). Pick it from a layer's **Blend Mode** list, or find it under Mixers. If the two pictures come out the wrong way round, turn on **Swap inputs**.
+**Skillet NTSC Mix** is the same thing as a mixer: it takes two pictures, this layer and the layers below it, so the layers below can be Source A or B. Pick it from a layer's **Blend Mode** list, or find it under Mixers. If the two pictures come out the wrong way round, turn on **Swap inputs**.
 
 ## Controls
 
@@ -66,52 +66,15 @@ Favorites are kept in `Documents\SkilletNTSC-favorites.txt`, so every copy of th
 **Sources**
 | Control | What it does |
 |---|---|
-| Source A | The layer, or something in its place: TV static, blank-tape static, video synth, three Gothic tracery generators (rose window, lancet arcade, quatrefoil diaper), your own pattern image, a Spout sender, or (in the mixer) the layers below |
-| Source B | The mixer's second input. **Auto** feeds a picture to presets that mix two, and to the ghost station: the layers below in the mixer, the layer itself in the effect. Or pick any of the sources above, off, or color bars |
-| Spout sender | Which Spout sender the Spout source receives. The list follows what's running |
-| Pattern file | An image (PNG, JPG, BMP, TGA) for the Pattern image source, tiled. Seamless patterns tile invisibly |
-| Pattern tiles | How many times the pattern repeats across the frame |
-| Generator drift | How fast the tracery and pattern generators move (0 holds them still) |
+| Source A | The layer, or something in its place: TV static, blank-tape static, video synth, three Gothic tracery generators (rose window, lancet arcade, quatrefoil diaper), or (in the mixer) the layers below |
+| Source B | The mixer's second input. **Auto** feeds a picture to presets that mix two: the layers below in the mixer, the layer itself in the effect. Or pick any of the sources above, off, or color bars |
 | Mirror A | Flips the layer before it's encoded |
 | Fill frame | Stretches the 4:3 tube to fill the output. Off is the authentic pillarbox |
 | Reset signal | Clears everything the path carries between frames: feedback, phosphor, sync lock, tape |
 | Caption | Text for the closed-caption decoder and the character generator presets |
+| Swap inputs | Mixer only: if "Layer" and "Layers below" come out the wrong way round, turn this on |
 
-**Another layer as a source.** Resolume doesn't let an effect read other layers, so there are two ways in. The mixer gets the layers below. For any layer at all in Arena, send it over Spout: Output → Advanced Output, add a screen, set its output to Spout, add a slice whose input is that layer. Then set Source A or B to **Spout** and pick that sender.
-
-**Rose window**: the face wrapped into a disc, as if the beam swept in circles.
-| Control | What it does |
-|---|---|
-| Rose window | 0 is the normal raster, 1 is fully wrapped; in between it warps from one to the other |
-| Rose folds | Off, or 4 to 16 mirrored sectors like a rose window's tracery |
-| Rose spin | Turns the disc, either way |
-| Rose in loop | Feeds the disc back through the camera loop, so with Camera loop up the pattern keeps growing into itself. Off applies it only to what you see |
-
-**Shroud**: a ghost of everything you burn in, building up over the set.
-| Control | What it does |
-|---|---|
-| Shroud | How strongly the burned-in ghost shows, in a linen tone |
-| Burn in | Burns the current picture in. Every press counts equally, so it holds all of them |
-| Auto burn | Burns in continuously, slowly |
-| Afterglow | Pushes the phosphor's persistence toward its longest |
-| Clear shroud | Starts over |
-
-**Vigil**: candlelight. The picture dims and warms, the power supply breathes with the flame (the raster swells and shrinks), and the glass glows.
-| Control | What it does |
-|---|---|
-| Vigil | How candle-lit |
-| Draught | How much the flame gutters in gusts |
-
-**Confessional**: Source B leaks in as a second station on the same channel, unsynced: it rolls, slants and beats against A's colour.
-| Control | What it does |
-|---|---|
-| Ghost station | How strongly B bleeds through |
-| Ghost drift | How fast it rolls and slants |
-
-**Relic**
-| Control | What it does |
-|---|---|
-| Signal to STL | Casts the current frame of the raw composite waveform (every scan line, sync pulses and all) as a printable relief: a 160 × 120 mm tile with up to 12 mm of relief, closed and ready to slice. A heightmap PNG for displacement is saved next to it. They go in `Documents\SkilletNTSC relics`, and Status shows the file name |
+**Other layers as a source.** Resolume doesn't let an effect read other layers. The mixer version gets the layers below this one (everything under it, combined), so put Skillet NTSC Mix on the top layer and choose **Layers below** for Source A or B.
 
 **Pads 1–16**: each pad has a preset dropdown and a button that fires it. They start on a spread of looks from across the catalogue.
 
@@ -132,7 +95,6 @@ The plugin saves with your composition like any Resolume effect, so pad assignme
 - The simulation runs on a fixed 754 × 480 NTSC raster, like the real thing, and is scaled up to your output.
 - The app's audio-reactive controls (audio bend, roll, tear and so on) have no audio input in the plugin yet, so they do nothing. Resolume's own audio-reactive automation on any parameter works.
 - App features that sit around the engine, like the LFO bay, scenes, recorder and saved looks, aren't part of this. Resolume's dashboard, LFOs and automation cover the same ground.
-- Spout is Windows-only, like the plugin.
 
 ## How it was built, and how to update it
 
@@ -151,4 +113,4 @@ VS=/path/to/videoskillet tools/golden/check_all.sh
 
 ## Credits
 
-videoskillet is © 2026 Colin Diesh, MIT License. This port keeps that license (see `LICENSE`). The FFGL SDK is © FreeFrame / Resolume (BSD), the Spout SDK is © Lynn Jarvis (BSD), stb is by Sean Barrett (MIT), and GLEW and the DejaVu font behind the caption ROM have their own notices. See `THIRD_PARTY_NOTICES.md`.
+videoskillet is © 2026 Colin Diesh, MIT License. This port keeps that license (see `LICENSE`). The FFGL SDK is © FreeFrame / Resolume (BSD), and GLEW and the DejaVu font behind the caption ROM have their own notices. See `THIRD_PARTY_NOTICES.md`.

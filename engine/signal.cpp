@@ -297,6 +297,7 @@ void CaptionState::setText(const std::string& text) {
 }
 
 uint32_t CaptionState::next() {
+  if (at_ >= codes_.size()) at_ = 0;
   uint32_t code = codes_[at_];
   at_ += 1;
   if (at_ >= codes_.size()) {
