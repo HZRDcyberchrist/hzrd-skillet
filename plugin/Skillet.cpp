@@ -303,7 +303,8 @@ void Skillet::syncFavorites(bool force) {
     std::vector<float> idx;
     for (int i = 0; i < kNumPresets; i++) {
       const bool fav = std::find(favs_.begin(), favs_.end(), i) != favs_.end();
-      marked.push_back(fav ? "\xE2\x99\xA5 " + presetLabel(i) : presetLabel(i));  // U+2665 heart
+      marked.push_back(fav ? "<3  " + presetLabel(i) : presetLabel(i));
+      // plain ASCII: Resolume's UI font has no heart glyph and draws U+2665 blank
       idx.push_back(static_cast<float>(i));
     }
     SetParamElements(PT_PRESET, marked, idx, !force);
