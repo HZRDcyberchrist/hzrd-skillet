@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(SkilletNTSC VERSION 1.0 LANGUAGES CXX)
+project(HZRDSkillet VERSION 1.0 LANGUAGES CXX)
 
-# Skillet NTSC — the videoskillet signal path as a Resolume FFGL effect.
-#   Windows (Resolume): builds SkilletNTSC.dll
+# HZRD//Skillet — the videoskillet signal path as a Resolume FFGL effect.
+#   Windows (Resolume): builds HZRD-Skillet.dll and HZRD-Skillet-Mixer.dll
 #   Linux:              builds the headless test harnesses (Mesa/EGL)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -38,9 +38,9 @@ set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/docs_folder.cpp)
 if(WIN32)
   foreach(variant IN ITEMS effect mixer)
     if(variant STREQUAL "mixer")
-      set(tgt SkilletNTSC-Mixer)
+      set(tgt HZRD-Skillet-Mixer)
     else()
-      set(tgt SkilletNTSC)
+      set(tgt HZRD-Skillet)
     endif()
     add_library(${tgt} SHARED
       ${PLUGIN_SOURCES}

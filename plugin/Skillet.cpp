@@ -77,13 +77,13 @@ static_assert(PT_COUNT <= 128, "values_ too small");
 #if SKILLET_MIXER
 // The mixer: two inputs, so Resolume lists it with the blend modes and hands
 // it the layers below as well as the layer.
-static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKM", "Skillet NTSC Mixer", 2, 1, 1, 0, FF_EFFECT,
-                                  "Skillet NTSC as a mixer: the layers below come in as a second picture for "
+static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKM", "HZRD//SkilletMix", 2, 1, 1, 0, FF_EFFECT,
+                                  "HZRD//Skillet as a mixer: the layers below come in as a second picture for "
                                   "Source A/B, the preset mixes and the Confessional ghost station.",
                                   "Port of videoskillet (c) Colin Diesh, MIT License");
 constexpr bool kMixer = true;
 #else
-static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKL", "Skillet NTSC", 2, 1, 1, 0, FF_EFFECT,
+static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKL", "HZRD//Skillet", 2, 1, 1, 0, FF_EFFECT,
                                   "Analog NTSC signal-path emulation: composite encode, tape, RF, sync, feedback and CRT, "
                                   "with the videoskillet preset catalogue.",
                                   "Port of videoskillet (c) Colin Diesh, MIT License");
@@ -179,7 +179,7 @@ static void saveDoc(const char* name, const std::string& text) {
 
 // ── favorites ──
 // One list shared by every Skillet instance in the process and kept in
-// Documents\SkilletNTSC-favorites.txt (one preset name per line, in the order
+// Documents\HZRD-Skillet-favorites.txt (one preset name per line, in the order
 // they were added), so favorites survive restarts and follow you across
 // compositions. The file can be edited by hand while Resolume is closed.
 namespace {
@@ -190,7 +190,10 @@ struct FavoriteStore {
 
   void loadLocked() {
     list.clear();
-    if (FILE* f = openDoc("SkilletNTSC-favorites.txt", "rb")) {
+    // (1.0.0 kept them as SkilletNTSC-favorites.txt; picked up once from there)
+    FILE* f = openDoc("HZRD-Skillet-favorites.txt", "rb");
+    if (!f) f = openDoc("SkilletNTSC-favorites.txt", "rb");
+    if (f) {
       char line[256];
       while (std::fgets(line, sizeof line, f)) {
         std::string n(line);
@@ -205,7 +208,7 @@ struct FavoriteStore {
   void saveLocked() const {
     std::string text;
     for (int i : list) text += std::string(kPresets[i].name) + "\n";
-    saveDoc("SkilletNTSC-favorites.txt", text);
+    saveDoc("HZRD-Skillet-favorites.txt", text);
   }
   // cheap per-frame check: has the list changed since `seen`?
   bool changedSince(unsigned seen) const { return version.load(std::memory_order_acquire) != seen || seen == 0; }
@@ -444,10 +447,10 @@ unsigned Skillet::nextRandom() {
 }
 
 // Everything the engine reported at startup, written where a user can find
-// it: Documents\\SkilletNTSC-log.txt on Windows. A plugin that fails in a host
+// it: Documents\\HZRD-Skillet-log.txt on Windows. A plugin that fails in a host
 // otherwise fails silently, and this is the only way to see why.
 static void writeLog(const std::string& text) {
-  if (FILE* f = openDoc("SkilletNTSC-log.txt", "wb")) {
+  if (FILE* f = openDoc("HZRD-Skillet-log.txt", "wb")) {
     std::fwrite(text.data(), 1, text.size(), f);
     std::fclose(f);
   }
@@ -464,15 +467,15 @@ FFResult Skillet::InitGL(const FFGLViewportStruct* vp) {
   engine_.reset(new Engine(getProc, seed | 1u));
   if (!engine_->ok()) {
     status_ = "FAILED: " + engine_->error().substr(0, 400);
-    writeLog("Skillet NTSC could not start.\nOpenGL: " + engine_->glInfo() + "\n\n" + engine_->error());
-    FFGLLog::LogToHost(("Skillet NTSC: " + engine_->error()).c_str());
+    writeLog("HZRD//Skillet could not start.\nOpenGL: " + engine_->glInfo() + "\n\n" + engine_->error());
+    FFGLLog::LogToHost(("HZRD//Skillet: " + engine_->error()).c_str());
     engine_.reset();
     RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
     // Stay loaded so the Status field can say why (the effect draws nothing).
     return CFFGLPlugin::InitGL(vp);
   }
   status_ = "Running on " + engine_->glInfo();
-  writeLog("Skillet NTSC started.\nOpenGL: " + engine_->glInfo() + "\n");
+  writeLog("HZRD//Skillet started.\nOpenGL: " + engine_->glInfo() + "\n");
   RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
   {
     std::lock_guard<std::mutex> lock(captionMutex_);

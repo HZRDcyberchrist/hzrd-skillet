@@ -1,6 +1,8 @@
-Skillet NTSC 1.0.0: videoskillet's analog NTSC signal path as a Resolume effect and mixer.
+HZRD//Skillet 1.0.1: videoskillet's analog NTSC signal path as a Resolume effect and mixer.
 
-**Download** `SkilletNTSC-v1.0.0-windows.zip` below, unzip it, and follow INSTALL.txt: copy both DLLs into `Documents\Resolume Arena\Extra Effects` and restart Resolume.
+**Download** `HZRD-Skillet-v1.0.1-windows.zip` below, unzip it, and follow INSTALL.txt: copy both DLLs into `Documents\Resolume Arena\Extra Effects` and restart Resolume.
+
+**New name.** Skillet NTSC is now HZRD//Skillet (the mixer is HZRD//SkilletMix). If you installed 1.0.0, delete `SkilletNTSC.dll` and `SkilletNTSC-Mixer.dll` when you add the new files. Compositions and favorites carry over.
 
 - 156 presets across tape wear, RF / broadcast, sync and deflection, decoder faults, feedback loops and circuit bending
 - Favorites with their own dropdown and prev / next / random; favorites are marked `<3` in every preset list

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Skillet NTSC includes or is derived from the following. Each notice below is reproduced as its license requires.
+HZRD//Skillet includes or is derived from the following. Each notice below is reproduced as its license requires.
 
 ## videoskillet
 

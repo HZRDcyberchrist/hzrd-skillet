@@ -1,4 +1,4 @@
-# Skillet NTSC — videoskillet for Resolume
+# HZRD//Skillet — videoskillet for Resolume
 
 A Resolume FFGL effect that runs [videoskillet](https://github.com/cmdcolin/videoskillet)'s analog video engine on your layer. videoskillet is Colin Diesh's WebGPU NTSC emulator. It doesn't paint glitches over the picture: it encodes the frame into a real composite waveform (525 lines × 910 samples of voltage), damages the waveform the way tape, cables, RF and circuit bending do, then decodes it with a model of a TV that has to find sync in whatever it's handed. Dot crawl, rainbowing, tearing, rolling and feedback all fall out of that.
 
@@ -8,9 +8,9 @@ This is a port of the whole signal path, not an approximation: all 26 GPU passes
 
 You need Resolume Arena or Avenue 7 or later on **Windows**, and a GPU with OpenGL 4.3 or newer (any discrete or integrated GPU from the last decade).
 
-Build `SkilletNTSC.dll` one of two ways.
+Build the two plugin DLLs one of two ways.
 
-**GitHub Actions (no tools needed).** Put this folder in a GitHub repository and push. The `build` workflow compiles the DLL on Windows and attaches it to the run as the artifact `SkilletNTSC-windows-x64`.
+**GitHub Actions (no tools needed).** Put this folder in a GitHub repository and push. The `build` workflow compiles both DLLs on Windows and attaches them to the run as the artifact `HZRD-Skillet-windows-x64`.
 
 **Visual Studio 2022 (with the "Desktop development with C++" workload, which includes CMake).** From a Developer PowerShell in this folder (builds both DLLs):
 
@@ -23,11 +23,12 @@ The DLLs land in `build\Release`.
 
 ## Install
 
-1. Copy `SkilletNTSC.dll` and `SkilletNTSC-Mixer.dll` into `Documents\Resolume Arena\Extra Effects` (or `Documents\Resolume Avenue\Extra Effects`).
+1. Copy `HZRD-Skillet.dll` and `HZRD-Skillet-Mixer.dll` into `Documents\Resolume Arena\Extra Effects` (or `Documents\Resolume Avenue\Extra Effects`).
 2. Restart Resolume.
-3. Drag **Skillet NTSC** from the Effects browser onto a layer or clip.
+   Upgrading from Skillet NTSC 1.0.0? Delete the old `SkilletNTSC.dll` and `SkilletNTSC-Mixer.dll` from that folder first: the new ones replace them (your compositions and favorites carry over).
+3. Drag **HZRD//Skillet** from the Effects browser onto a layer or clip.
 
-**Skillet NTSC Mix** is the same thing as a mixer: it takes two pictures, this layer and the layers below it, so the layers below can be Source A or B. Pick it from a layer's **Blend Mode** list, or find it under Mixers. If the two pictures come out the wrong way round, turn on **Swap inputs**.
+**HZRD//SkilletMix** is the same thing as a mixer: it takes two pictures, this layer and the layers below it, so the layers below can be Source A or B. Pick it from a layer's **Blend Mode** list, or find it under Mixers. If the two pictures come out the wrong way round, turn on **Swap inputs**.
 
 ## Controls
 
@@ -46,7 +47,7 @@ The DLLs land in `build\Release`.
 | Favorites | Your favorites, in the order you added them. Shows "(not a favorite)" when the preset that's up isn't one |
 | Fav prev / Fav next / Fav random | Step through or jump around your favorites only |
 
-Favorites are kept in `Documents\SkilletNTSC-favorites.txt`, so every copy of the effect shares them and they survive restarts and new compositions.
+Favorites are kept in `Documents\HZRD-Skillet-favorites.txt`, so every copy of the effect shares them and they survive restarts and new compositions.
 
 **Perform**: live knobs on top of whatever preset is up.
 | Control | What it does |
@@ -74,7 +75,7 @@ Favorites are kept in `Documents\SkilletNTSC-favorites.txt`, so every copy of th
 | Caption | Text for the closed-caption decoder and the character generator presets |
 | Swap inputs | Mixer only: if "Layer" and "Layers below" come out the wrong way round, turn this on |
 
-**Other layers as a source.** Resolume doesn't let an effect read other layers. The mixer version gets the layers below this one (everything under it, combined), so put Skillet NTSC Mix on the top layer and choose **Layers below** for Source A or B.
+**Other layers as a source.** Resolume doesn't let an effect read other layers. The mixer version gets the layers below this one (everything under it, combined), so put HZRD//SkilletMix on the top layer and choose **Layers below** for Source A or B.
 
 **Pads 1–16**: each pad has a preset dropdown and a button that fires it. They start on a spread of looks from across the catalogue.
 
