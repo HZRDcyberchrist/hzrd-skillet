@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a release with this version (e.g. 1.0.0); leave empty to just build"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -32,17 +37,21 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $v = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } elseif ('${{ github.event.inputs.release }}' -ne '') { 'v${{ github.event.inputs.release }}' } else { 'dev' }
           New-Item -ItemType Directory -Force pkg | Out-Null
           Copy-Item build\Release\SkilletNTSC.dll, build\Release\SkilletNTSC-Mixer.dll, dist\INSTALL.txt, README.md, LICENSE, THIRD_PARTY_NOTICES.md pkg\
           Compress-Archive -Path pkg\* -DestinationPath "SkilletNTSC-$v-windows.zip" -Force
           "ZIP=SkilletNTSC-$v-windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - name: Publish the release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish the release (tags, or a manual run with a version)
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', github.event.inputs.release) }}
+          target_commitish: ${{ github.sha }}
+          name: Skillet NTSC ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', github.event.inputs.release) }}
           files: ${{ env.ZIP }}
           body_path: dist/RELEASE_NOTES.md
+          make_latest: true
       - uses: actions/upload-artifact@v4
         with:
           name: SkilletNTSC-windows-x64
