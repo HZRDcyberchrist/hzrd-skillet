@@ -1,4 +1,5 @@
 /build/
+/pkg/
 test/*.ppm
 test/*.png
 test/*.rgba

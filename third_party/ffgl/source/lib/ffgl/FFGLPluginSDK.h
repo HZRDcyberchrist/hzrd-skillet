@@ -167,7 +167,7 @@ public:
 	}
 
 	/// This flag indicates that Connect has been called by the host, or automatically called by FFGL
-	bool m_isConnected;
+	bool m_isConnected = false; // Skillet: initialised (the SDK left it indeterminate)
 
 	/// The only public data field CFFGLPlugin contains is m_pPlugin, a pointer to the plugin instance.
 	/// Subclasses may use this pointer for self-referencing (e.g., a plugin may pass this pointer to external modules,

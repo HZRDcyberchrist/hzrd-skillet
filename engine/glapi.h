@@ -93,7 +93,8 @@ using GLsizeiptr = std::ptrdiff_t;
   X(Uniform1f, void, (GLint, GLfloat))                                                               \
   X(Uniform2f, void, (GLint, GLfloat, GLfloat))                                                      \
   X(Uniform4f, void, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                                    \
-  X(BlendFunc, void, (GLenum, GLenum))
+  X(BlendFunc, void, (GLenum, GLenum))                                                               \
+  X(GetFloatv, void, (GLenum, GLfloat*))
 
 #define SKILLET_DECLARE(name, ret, params) \
   using PFN_##name = ret(SKILLET_APIENTRY*) params; \
@@ -128,6 +129,7 @@ constexpr GLenum TRIANGLES = 0x0004;
 constexpr GLenum BLEND = 0x0BE2, DEPTH_TEST = 0x0B71, SCISSOR_TEST = 0x0C11, CULL_FACE = 0x0B44, FRAMEBUFFER_SRGB = 0x8DB9;
 constexpr GLenum PACK_ALIGNMENT = 0x0D05, UNPACK_ALIGNMENT = 0x0CF5, UNPACK_ROW_LENGTH = 0x0CF2;
 constexpr GLenum CURRENT_PROGRAM = 0x8B8D, FRAMEBUFFER_BINDING = 0x8CA6, READ_FRAMEBUFFER_BINDING = 0x8CAA, VIEWPORT = 0x0BA2;
+constexpr GLenum COLOR_CLEAR_VALUE = 0x0C22;
 constexpr GLenum ACTIVE_TEXTURE = 0x84E0, TEXTURE_BINDING_2D = 0x8069, VERTEX_ARRAY_BINDING = 0x85B5;
 
 } // namespace gl

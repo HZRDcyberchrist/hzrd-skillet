@@ -53,7 +53,14 @@ class Skillet : public CFFGLPlugin {
 
   std::unique_ptr<skillet::Engine> engine_;
   std::chrono::steady_clock::time_point t0_;
+  // Parameter values as the host set them (clamped to their ranges), and the
+  // copy the render thread works from for one frame. stateMutex_ covers
+  // values_, the preset/favorites state and the element lists: Resolume can
+  // set parameters from its interface thread while a frame renders.
   float values_[128] = {};
+  float frame_[128] = {};
+  float lo_[128] = {}, hi_[128] = {};
+  std::mutex stateMutex_;
   // Resolume can set text from its interface thread; the render thread picks
   // it up at the next frame, so the engine is only touched with GL current.
   std::string caption_ = "VIDEO SKILLET";
@@ -68,6 +75,8 @@ class Skillet : public CFFGLPlugin {
   bool pendingReset_ = false;
   unsigned rng_ = 0x2545F491u;
   unsigned nextRandom();
+  void setRange(unsigned p, float lo, float hi);
+  int indexOf(unsigned p, int n) const;
   std::vector<int> favs_;       // this instance's copy of the shared favorites
   unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
 };

@@ -1,0 +1,39 @@
+SKILLET NTSC for Resolume
+Analog NTSC video as a Resolume effect: 156 looks from videoskillet,
+playable from a MIDI controller.
+
+WHAT YOU NEED
+  - Windows 10 or 11
+  - Resolume Arena or Avenue 7 or newer
+  - Any GPU from roughly the last ten years
+
+INSTALL
+  1. Quit Resolume.
+  2. Copy SkilletNTSC.dll and SkilletNTSC-Mixer.dll into
+       Documents\Resolume Arena\Extra Effects
+     (or Documents\Resolume Avenue\Extra Effects).
+     Create the folder if it isn't there.
+  3. Start Resolume.
+
+USE IT
+  - Effect: drag "Skillet NTSC" from the Effects browser onto a layer or clip.
+  - Mixer: on a layer, open Blend Mode and pick "Skillet NTSC Mix". It can
+    use the layers below as Source A or B.
+  - Pick a look from Preset, or step through with Prev / Next / Random.
+  - Add favorite stars the look that's up; Favorites and Fav prev / next /
+    random then play only your starred looks. Favorites are kept in
+    Documents\SkilletNTSC-favorites.txt.
+
+MIDI
+  Shortcuts > Edit MIDI, click any control, then move the pad, knob or fader
+  on your controller. Good first mappings: Pad 1-16 to your pads, Prev / Next
+  / Random / Fav next to buttons, Amount and the Perform knobs to faders.
+
+IF NOTHING HAPPENS
+  Open the effect's Status field: it says what went wrong. The same text is
+  written to Documents\SkilletNTSC-log.txt.
+
+Full control reference: README.md in this folder.
+
+Free to use. Port of videoskillet by Colin Diesh (MIT License); see LICENSE
+and THIRD_PARTY_NOTICES.md.

@@ -27,7 +27,8 @@ class Extras {
 
   unsigned vao_ = 0, fbo_ = 0;
   unsigned progTracery_ = 0;
-  unsigned genTex_[2] = {0, 0};
+  int uMode_ = -1, uT_ = -1, uDrift_ = -1, uAspect_ = -1;
+  unsigned genTex_[2] = {0, 0};  // made on first use: most sets never pick tracery
 };
 
 } // namespace skillet

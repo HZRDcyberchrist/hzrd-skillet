@@ -86,7 +86,8 @@ enum Engine::Res : int {
 
 struct Engine::Pass {
   int prog;
-  std::vector<int> res;
+  int res[12];
+  int n;
   unsigned x, y;
 };
 
@@ -97,12 +98,26 @@ Engine::Engine(GetProcFn getProc, uint32_t seed) : chain_(new SignalChain(seed))
 }
 
 Engine::~Engine() {
-  if (ok_) destroyResources();
+  if (resources_) destroyResources();
 }
 
 int Engine::progIndex(const char* name) const {
-  for (int i = 0; i < kNumPrograms; i++)
-    if (std::strcmp(kPrograms[i].name, name) == 0) return i;
+  // Pass names are string literals, so their address is a stable key: after
+  // the first frame every lookup is a pointer compare, not a strcmp scan.
+  Engine* self = const_cast<Engine*>(this);
+  for (int i = 0; i < 64; i++) {
+    if (progCacheName_[i] == name) return progCache_[i][0];
+    if (progCacheName_[i] == nullptr) {
+      int found = -1;
+      for (int k = 0; k < kNumPrograms; k++)
+        if (std::strcmp(kPrograms[k].name, name) == 0) found = k;
+      self->progCacheName_[i] = name;
+      self->progCache_[i][0] = found;
+      return found;
+    }
+  }
+  for (int k = 0; k < kNumPrograms; k++)
+    if (std::strcmp(kPrograms[k].name, name) == 0) return k;
   return -1;
 }
 
@@ -208,36 +223,30 @@ bool Engine::buildPrograms() {
   return true;
 }
 
-// Every buffer the engine makes, with its size, so a reset can zero it.
-static std::vector<std::pair<GLuint, GLsizeiptr>>& bufferSizes() {
-  static std::vector<std::pair<GLuint, GLsizeiptr>> v;
-  return v;
-}
-
-static void zeroBuffer(GLenum target, GLuint b, GLsizeiptr size) {
+void Engine::zeroBuffer(GLenum target, GLuint b, long size) {
   // WebGPU hands a buffer over zeroed and the signal path counts on it (the
   // flywheel's never-run servo state is zero); GL hands over garbage.
   // glClearBufferData is 4.3; uploading zeros works everywhere.
-  static std::vector<uint8_t> zeros;
-  if (static_cast<GLsizeiptr>(zeros.size()) < size) zeros.assign(static_cast<size_t>(size), 0);
+  if (size <= 0) return;
+  if (static_cast<long>(zeros_.size()) < size) zeros_.assign(static_cast<size_t>(size), 0);
   BindBuffer(target, b);
-  BufferSubData(target, 0, size, zeros.data());
+  BufferSubData(target, 0, size, zeros_.data());
   BindBuffer(target, 0);
 }
 
-static GLuint makeBuffer(GLenum target, GLsizeiptr size) {
+GLuint Engine::makeBuffer(GLenum target, long size) {
   GLuint b = 0;
   GenBuffers(1, &b);
   BindBuffer(target, b);
   BufferData(target, size, nullptr, DYNAMIC_DRAW);
   BindBuffer(target, 0);
   zeroBuffer(target, b, size);
-  bufferSizes().push_back({b, size});
+  bufferSizes_.push_back({b, size});
   return b;
 }
 
-static GLsizeiptr sizeOf(GLuint b) {
-  for (const auto& p : bufferSizes())
+long Engine::sizeOf(GLuint b) const {
+  for (const auto& p : bufferSizes_)
     if (p.first == b) return p.second;
   return 0;
 }
@@ -256,15 +265,19 @@ static GLuint makeTexture(int w, int h, GLenum fmt) {
 }
 
 void Engine::clearTexture(unsigned tex) {
+  GLfloat was[4] = {0, 0, 0, 0};
+  GetFloatv(COLOR_CLEAR_VALUE, was);
   BindFramebuffer(DRAW_FRAMEBUFFER, drawFbo_);
   FramebufferTexture2D(DRAW_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, tex, 0);
   ClearColor(0, 0, 0, 0);
   Clear(COLOR_BUFFER_BIT);
+  ClearColor(was[0], was[1], was[2], was[3]);  // the host's, as it was
   FramebufferTexture2D(DRAW_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, 0, 0);
   BindFramebuffer(DRAW_FRAMEBUFFER, 0);
 }
 
 void Engine::createResources() {
+  resources_ = true;
   const GLsizeiptr N = N_SAMPLES;
   paramsUbo_ = makeBuffer(UNIFORM_BUFFER, kParamBytes);
   feedAUbo_ = makeBuffer(UNIFORM_BUFFER, kParamBytes);
@@ -307,12 +320,14 @@ void Engine::createResources() {
     GenTextures(1, &outSrgb_);
     TextureView(outSrgb_, TEXTURE_2D, outTex_, SRGB8_ALPHA8, 0, 1, 0, 1);
   }
-  BindTexture(TEXTURE_2D, outSrgb_);
-  TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
-  TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
-  TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
-  TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
-  BindTexture(TEXTURE_2D, 0);
+  if (outSrgb_) {  // (without the view, don't touch texture 0's parameters)
+    BindTexture(TEXTURE_2D, outSrgb_);
+    TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+    TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+    TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
+    TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
+    BindTexture(TEXTURE_2D, 0);
+  }
   faceTex_ = makeTexture(ACTIVE_WIDTH, ACTIVE_HEIGHT, RGBA8);
   grainTex_ = makeTexture(ACTIVE_WIDTH, ACTIVE_HEIGHT, R32F);
 
@@ -333,16 +348,18 @@ void Engine::destroyResources() {
                    progSnap_, chromaBuf_, underBuf_, lineInfoBuf_, lineParamsBuf_, timingBuf_, syncMeasureBuf_,
                    audioBuf_, ccBuf_, cgBuf_, persist_[0], persist_[1]};
   DeleteBuffers(static_cast<GLsizei>(sizeof bufs / sizeof bufs[0]), bufs);
-  bufferSizes().clear();
+  bufferSizes_.clear();
   GLuint texs[] = {texA_, texB_, inputTex_, outSrgb_, outTex_, faceTex_, grainTex_};
   DeleteTextures(static_cast<GLsizei>(sizeof texs / sizeof texs[0]), texs);
   DeleteSamplers(1, &sampler_);
   DeleteVertexArrays(1, &vao_);
   DeleteFramebuffers(1, &readFbo_);
   DeleteFramebuffers(1, &drawFbo_);
-  for (int i = 0; i < kNumPrograms; i++)
-    if (programs_[i].id) DeleteProgram(programs_[i].id);
+  if (programs_)
+    for (int i = 0; i < kNumPrograms; i++)
+      if (programs_[i].id) DeleteProgram(programs_[i].id);
   extras_.destroy();
+  resources_ = false;
 }
 
 bool Engine::build(GetProcFn getProc) {
@@ -414,8 +431,9 @@ void Engine::setCaption(const std::string& text) {
 }
 
 void Engine::setSourceB(SourceB kind) {
+  // bars are drawn into slot B once when picked, not every frame
+  if (kind == SourceB::ColorBars && sourceB_ != kind) barsLoaded_ = false;
   sourceB_ = kind;
-  if (kind == SourceB::ColorBars) barsLoaded_ = false;
 }
 
 // SMPTE-style colour bars at 75%, the reference a studio would put on B.
@@ -554,7 +572,7 @@ void Engine::bindPass(const Pass& p, int) {
   UseProgram(pr.id);
   for (int i = 0; i < pr.def->numBindings; i++) {
     const ShaderBinding& b = pr.def->bindings[i];
-    if (b.binding < 0 || b.binding >= static_cast<int>(p.res.size())) continue;
+    if (b.binding < 0 || b.binding >= p.n) continue;
     const int r = p.res[b.binding];
     switch (b.kind) {
       case BindKind::Ubo: BindBufferBase(UNIFORM_BUFFER, b.unit, bufOf(r)); break;
@@ -590,8 +608,11 @@ void Engine::runSimulation(const InputFrame& in) {
   const unsigned perPixelT[2] = {(ACTIVE_WIDTH + kTileWG - 1) / kTileWG, ACTIVE_HEIGHT};
   const unsigned perTile[2] = {(ACTIVE_WIDTH + 7) / 8, (ACTIVE_HEIGHT + 7) / 8};
   const unsigned perRow[2] = {(LINES + 63) / 64, 1};
-  auto P = [&](const char* name, std::vector<int> res, const unsigned* d) {
-    return Pass{progIndex(name), std::move(res), d[0], d[1]};
+  auto P = [&](const char* name, std::initializer_list<int> res, const unsigned* d) {
+    Pass p{progIndex(name), {}, 0, d[0], d[1]};
+    for (int r : res)
+      if (p.n < 12) p.res[p.n++] = r;
+    return p;
   };
   const unsigned one[2] = {1, 1};
 

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <string>
 #include <vector>
@@ -101,6 +102,26 @@ int main(int argc, char** argv) {
       });
       for (int j = 0; j < 60; j++) { BindFramebuffer(FRAMEBUFFER, fbo); Viewport(0, 0, W, H); call(FF_PROCESS_OPENGL, ptr(&pgl), id); }
       ui.join(); printf("caption storm of %d edits survived\n", n);
+    } else if (cmd.rfind("uistorm:", 0) == 0) {
+      // an interface thread pressing buttons, picking favorites and sending
+      // junk values (NaN, infinities, huge numbers) while frames render
+      int n = atoi(cmd.c_str() + 8);
+      unsigned np2 = call(FF_GET_NUM_PARAMETERS, u(0), nullptr).UIntValue;
+      std::thread ui([&, n, np2] {
+        unsigned r = 12345;
+        const float junk[] = {std::nanf(""), 1e30f, -1e30f, 9999.0f, -3.0f, 0.5f, 1.0f, 0.0f, 155.0f, 2.0f};
+        const char* buttons[] = {"Add favorite", "Remove favorite", "Next", "Prev", "Random", "Fav next", "Fav prev", "Fav random", "Pad 3", "Reset signal"};
+        for (int k = 0; k < n; k++) {
+          r = r * 1103515245u + 12345u;
+          if (k % 3 == 0) { int p = findParam(buttons[(r >> 8) % 10]); if (p >= 0) { setf(id, p, 1.0f); setf(id, p, 0.0f); } }
+          else { unsigned p = (r >> 4) % np2; int t = call(FF_GET_PARAMETER_TYPE, u(p), nullptr).UIntValue; if (t != 100 && t != 14) setf(id, p, junk[(r >> 12) % 10]); }
+          call(FF_GET_PARAMETER_DISPLAY, u((r >> 3) % np2), id);
+          std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+      });
+      for (int j = 0; j < 120; j++) { BindFramebuffer(FRAMEBUFFER, fbo); Viewport(0, 0, W, H); call(FF_PROCESS_OPENGL, ptr(&pgl), id);
+        GetParamEventsStruct q{0, nullptr}; call(FF_GET_PARAMETER_EVENTS, ptr(&q), id); std::vector<ParamEventStruct> ev(q.numEvents + 64); GetParamEventsStruct g{q.numEvents, ev.data()}; call(FF_GET_PARAMETER_EVENTS, ptr(&g), id); }
+      ui.join(); printf("ui storm of %d actions survived\n", n);
     } else if (cmd == "status") {
       int p = findParam("Status"); const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
       printf("status: %s\n", t ? t : "");

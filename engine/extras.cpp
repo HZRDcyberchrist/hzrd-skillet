@@ -230,7 +230,7 @@ static GLuint makeTex(int w, int h, GLenum fmt) {
   return t;
 }
 
-constexpr int GEN_W = 1024, GEN_H = 768;
+constexpr int GEN_W = 800, GEN_H = 600;  // 4:3, a little over the 754x480 raster
 
 bool Extras::init(std::string& error) {
   std::string e;
@@ -241,8 +241,10 @@ bool Extras::init(std::string& error) {
   }
   GenVertexArrays(1, &vao_);
   GenFramebuffers(1, &fbo_);
-  genTex_[0] = makeTex(GEN_W, GEN_H, RGBA8);
-  genTex_[1] = makeTex(GEN_W, GEN_H, RGBA8);
+  uMode_ = GetUniformLocation(progTracery_, "mode");
+  uT_ = GetUniformLocation(progTracery_, "t");
+  uDrift_ = GetUniformLocation(progTracery_, "drift");
+  uAspect_ = GetUniformLocation(progTracery_, "aspect");
   return true;
 }
 
@@ -273,13 +275,14 @@ void Extras::drawInto(unsigned tex, int w, int h) {
 unsigned Extras::drawGenerator(int slot, Generator g, double seconds, float drift, int& w, int& h) {
   w = GEN_W;
   h = GEN_H;
+  if (!genTex_[slot & 1]) genTex_[slot & 1] = makeTex(GEN_W, GEN_H, RGBA8);
   const unsigned dst = genTex_[slot & 1];
   UseProgram(progTracery_);
   const int mode = g == Generator::TraceryRose ? 1 : g == Generator::TraceryLancet ? 2 : 3;
-  Uniform1i(GetUniformLocation(progTracery_, "mode"), mode);
-  Uniform1f(GetUniformLocation(progTracery_, "t"), static_cast<float>(std::fmod(seconds, 3600.0)));
-  Uniform1f(GetUniformLocation(progTracery_, "drift"), drift);
-  Uniform1f(GetUniformLocation(progTracery_, "aspect"), static_cast<float>(GEN_W) / GEN_H);
+  Uniform1i(uMode_, mode);
+  Uniform1f(uT_, static_cast<float>(std::fmod(seconds, 3600.0)));
+  Uniform1f(uDrift_, drift);
+  Uniform1f(uAspect_, static_cast<float>(GEN_W) / GEN_H);
   drawInto(dst, GEN_W, GEN_H);
   UseProgram(0);
   return dst;

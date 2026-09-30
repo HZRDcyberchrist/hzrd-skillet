@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "chain.h"
 #include "extras.h"
@@ -89,9 +91,17 @@ class Engine {
   void present(const OutputTarget& out, unsigned tex);
   void clearTexture(unsigned tex);
   unsigned bufOf(int r) const;
+  unsigned makeBuffer(gl::GLenum target, long size);
+  long sizeOf(unsigned b) const;
+  void zeroBuffer(gl::GLenum target, unsigned b, long size);
   unsigned texOf(int r) const;
 
   bool ok_ = false;
+  bool resources_ = false;  // createResources ran (so there's something to free)
+  std::vector<std::pair<unsigned, long>> bufferSizes_;  // every buffer, for Reset
+  std::vector<uint8_t> zeros_;
+  int progCache_[64][1] = {};
+  const char* progCacheName_[64] = {};
   bool legacy_ = false;  // a 4.1 context: compute through ARB extensions
   std::string error_;
   std::string glInfo_;

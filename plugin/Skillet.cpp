@@ -3,6 +3,7 @@
 #include "Skillet.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj.h>
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 #elif defined(__APPLE__)
 #include <dlfcn.h>
 #else
@@ -135,18 +139,53 @@ static void* getProc(const char* name) {
 #endif
 }
 
-// Documents\<name> on Windows, $HOME/<name> elsewhere.
-static std::string docPath(const char* name) {
+// Files live in the user's Documents folder (where Windows really keeps it,
+// OneDrive redirection included), or $HOME elsewhere.
 #if defined(_WIN32)
-  char buf[MAX_PATH] = {};
-  const DWORD n = GetEnvironmentVariableA("USERPROFILE", buf, MAX_PATH);
-  if (n > 0 && n < MAX_PATH) return std::string(buf) + "\\Documents\\" + name;
-  return name;
+static std::wstring docPath(const char* name) {
+  std::wstring dir;
+  PWSTR p = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p)) && p) dir = p;
+  if (p) CoTaskMemFree(p);
+  if (dir.empty()) {
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) dir = std::wstring(buf) + L"\\Documents";
+  }
+  std::wstring w;
+  for (const char* c = name; *c; c++) w += static_cast<wchar_t>(*c);  // names are ASCII
+  return dir.empty() ? w : dir + L"\\" + w;
+}
+static FILE* openDoc(const char* name, const char* mode) {
+  std::wstring m;
+  for (const char* c = mode; *c; c++) m += static_cast<wchar_t>(*c);
+  return _wfopen(docPath(name).c_str(), m.c_str());
+}
+// Writes the whole file to a temporary and swaps it in, so a crash or a
+// second Resolume mid-write never leaves it half written.
+static void saveDoc(const char* name, const std::string& text) {
+  const std::wstring path = docPath(name), tmp = path + L".tmp";
+  FILE* f = _wfopen(tmp.c_str(), L"wb");
+  if (!f) return;
+  const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+  if (std::fclose(f) == 0 && ok) MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+  else DeleteFileW(tmp.c_str());
+}
 #else
+static std::string docPath(const char* name) {
   const char* home = std::getenv("HOME");
   return std::string(home ? home : ".") + "/" + name;
-#endif
 }
+static FILE* openDoc(const char* name, const char* mode) { return std::fopen(docPath(name).c_str(), mode); }
+static void saveDoc(const char* name, const std::string& text) {
+  const std::string path = docPath(name), tmp = path + ".tmp";
+  FILE* f = std::fopen(tmp.c_str(), "wb");
+  if (!f) return;
+  const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+  if (std::fclose(f) == 0 && ok) std::rename(tmp.c_str(), path.c_str());
+  else std::remove(tmp.c_str());
+}
+#endif
 
 // ── favorites ──
 // One list shared by every Skillet instance in the process and kept in
@@ -157,12 +196,11 @@ namespace {
 struct FavoriteStore {
   std::mutex m;
   std::vector<int> list;
-  unsigned version = 0;  // 0 = not read from disk yet
+  std::atomic<unsigned> version{0};  // 0 = not read from disk yet
 
   void loadLocked() {
-    version = 1;
     list.clear();
-    if (FILE* f = std::fopen(docPath("SkilletNTSC-favorites.txt").c_str(), "rb")) {
+    if (FILE* f = openDoc("SkilletNTSC-favorites.txt", "rb")) {
       char line[256];
       while (std::fgets(line, sizeof line, f)) {
         std::string n(line);
@@ -172,13 +210,15 @@ struct FavoriteStore {
       }
       std::fclose(f);
     }
+    version = 1;
   }
   void saveLocked() const {
-    if (FILE* f = std::fopen(docPath("SkilletNTSC-favorites.txt").c_str(), "wb")) {
-      for (int i : list) std::fprintf(f, "%s\n", kPresets[i].name);
-      std::fclose(f);
-    }
+    std::string text;
+    for (int i : list) text += std::string(kPresets[i].name) + "\n";
+    saveDoc("SkilletNTSC-favorites.txt", text);
   }
+  // cheap per-frame check: has the list changed since `seen`?
+  bool changedSince(unsigned seen) const { return version.load(std::memory_order_acquire) != seen || seen == 0; }
   // copy of the list, and its revision
   unsigned snapshot(std::vector<int>& out) {
     std::lock_guard<std::mutex> lock(m);
@@ -187,6 +227,7 @@ struct FavoriteStore {
     return version;
   }
   void add(int preset) {
+    if (preset < 0 || preset >= kNumPresets) return;
     std::lock_guard<std::mutex> lock(m);
     if (version == 0) loadLocked();
     if (std::find(list.begin(), list.end(), preset) != list.end()) return;
@@ -210,9 +251,29 @@ FavoriteStore& favorites() {
 }
 }  // namespace
 
+// A float from the host as an index into n entries: NaN and out-of-range
+// values never reach an int conversion.
+static int toIndex(float v, int n) {
+  if (!(v >= 0.0f)) return 0;  // also catches NaN
+  if (v >= static_cast<float>(n - 1)) return n - 1;
+  return static_cast<int>(v + 0.5f);
+}
+
+void Skillet::setRange(unsigned p, float lo, float hi) {
+  lo_[p] = lo;
+  hi_[p] = hi;
+  SetParamRange(p, lo, hi);
+}
+
+int Skillet::indexOf(unsigned p, int n) const { return toIndex(values_[p], n); }
+
 Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetMinInputs(kMixer ? 2 : 1);
   SetMaxInputs(kMixer ? 2 : 1);
+  // every value is 0..1 unless given a range below; option lists get theirs
+  // from their length
+  for (int i = 0; i < 128; i++) hi_[i] = 1.0f;
+  auto options = [this](unsigned p, int n) { hi_[p] = static_cast<float>(n - 1); };
 
   // defaults
   values_[PT_PRESET] = 0;
@@ -229,15 +290,22 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   for (int i = 0; i < 16; i++) values_[PT_PAD_PRESET0 + i] = static_cast<float>(presetByName(kPadDefaults[i]));
 
   // Preset
+  // Preset and pad lists: each entry's text is sized once for the "  <3"
+  // mark, so marking later rewrites it in place and never frees a string the
+  // host might be reading (see syncFavorites).
   SetOptionParamInfo(PT_PRESET, "Preset", kNumPresets, 0);
-  for (int i = 0; i < kNumPresets; i++) SetParamElementInfo(PT_PRESET, i, presetLabel(i).c_str(), static_cast<float>(i));
+  for (int k = 0; k < kNumPresets; k++) {
+    SetParamElementInfo(PT_PRESET, k, (presetLabel(k) + "  <3").c_str(), static_cast<float>(k));
+    SetParamElementInfo(PT_PRESET, k, presetLabel(k).c_str(), static_cast<float>(k));
+  }
+  options(PT_PRESET, kNumPresets);
   SetParamInfo(PT_MORPH, "Morph", FF_TYPE_STANDARD, values_[PT_MORPH]);
-  SetParamRange(PT_MORPH, 0, 30);
+  setRange(PT_MORPH, 0, 30);
   SetParamInfo(PT_PREV, "Prev", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_NEXT, "Next", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_RANDOM, "Random", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_AMOUNT, "Amount", FF_TYPE_STANDARD, values_[PT_AMOUNT]);
-  SetParamRange(PT_AMOUNT, 0, 2);
+  setRange(PT_AMOUNT, 0, 2);
   for (unsigned p : {PT_PRESET, PT_MORPH, PT_PREV, PT_NEXT, PT_RANDOM, PT_AMOUNT}) SetParamGroup(p, "Preset");
 
   // Favorites. The dropdown's first entry says whether the preset that's up
@@ -245,8 +313,9 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   // changes (syncFavorites).
   SetParamInfo(PT_FAV_ADD, "Add favorite", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_FAV_REMOVE, "Remove favorite", FF_TYPE_EVENT, 0.0f);
-  SetOptionParamInfo(PT_FAV, "Favorites", 1, 0);
-  SetParamElementInfo(PT_FAV, 0, "(no favorites yet)", 0);
+  // sized for every preset up front so the list never has to move in memory
+  SetOptionParamInfo(PT_FAV, "Favorites", kNumPresets + 1, 0);
+  SetParamElements(PT_FAV, {"(no favorites yet)"}, {0.0f}, false);
   SetParamInfo(PT_FAV_PREV, "Fav prev", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_FAV_NEXT, "Fav next", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_FAV_RANDOM, "Fav random", FF_TYPE_EVENT, 0.0f);
@@ -257,12 +326,12 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_WOBBLE, "Tape wobble", FF_TYPE_STANDARD, 0.0f);
   SetParamInfo(PT_TRACKING, "Tracking", FF_TYPE_STANDARD, 0.0f);
   SetParamInfo(PT_ROLL, "Roll", FF_TYPE_STANDARD, 0.0f);
-  SetParamRange(PT_ROLL, -1, 1);
+  setRange(PT_ROLL, -1, 1);
   SetParamInfo(PT_BEND, "Bend", FF_TYPE_STANDARD, 0.0f);
   SetParamInfo(PT_TINT, "Tint", FF_TYPE_STANDARD, 0.0f);
-  SetParamRange(PT_TINT, -180, 180);
+  setRange(PT_TINT, -180, 180);
   SetParamInfo(PT_COLOR, "Color", FF_TYPE_STANDARD, values_[PT_COLOR]);
-  SetParamRange(PT_COLOR, 0, 4);
+  setRange(PT_COLOR, 0, 4);
   SetParamInfo(PT_CAMLOOP, "Camera loop", FF_TYPE_STANDARD, 0.0f);
   SetParamInfo(PT_TIME, "Time", FF_TYPE_STANDARD, values_[PT_TIME]);
   for (unsigned p = PT_NOISE; p <= PT_TIME; p++) SetParamGroup(p, "Perform");
@@ -271,6 +340,7 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   for (int i = 0; i < 4; i++) {
     const std::string n = std::to_string(i + 1);
     SetOptionParamInfo(PT_ASSIGN_T0 + i, ("Assign " + n).c_str(), kNumControls + 1, 0);
+    options(PT_ASSIGN_T0 + i, kNumControls + 1);
     SetParamElementInfo(PT_ASSIGN_T0 + i, 0, "(none)", 0);
     for (int k = 0; k < kNumControls; k++)
       SetParamElementInfo(PT_ASSIGN_T0 + i, k + 1, kSliders[k].label, static_cast<float>(k + 1));
@@ -281,8 +351,10 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
 
   // Sources and the tube
   SetOptionParamInfo(PT_SOURCE_A, "Source A", kNumSourceA, 0);
+  options(PT_SOURCE_A, kNumSourceA);
   for (int i = 0; i < kNumSourceA; i++) SetParamElementInfo(PT_SOURCE_A, i, kSourceANames[i], static_cast<float>(i));
   SetOptionParamInfo(PT_SOURCE_B, "Source B", kNumSourceB, 0);
+  options(PT_SOURCE_B, kNumSourceB);
   for (int i = 0; i < kNumSourceB; i++) SetParamElementInfo(PT_SOURCE_B, i, kSourceBNames[i], static_cast<float>(i));
   SetParamInfo(PT_MIRROR, "Mirror A", FF_TYPE_BOOLEAN, 0.0f);
   SetParamInfo(PT_FILL, "Fill frame", FF_TYPE_BOOLEAN, 0.0f);
@@ -298,7 +370,11 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   for (int i = 0; i < 16; i++) {
     const std::string n = std::to_string(i + 1);
     SetOptionParamInfo(PT_PAD_PRESET0 + i, ("Pad " + n + " preset").c_str(), kNumPresets, values_[PT_PAD_PRESET0 + i]);
-    for (int k = 0; k < kNumPresets; k++) SetParamElementInfo(PT_PAD_PRESET0 + i, k, presetLabel(k).c_str(), static_cast<float>(k));
+    for (int k = 0; k < kNumPresets; k++) {
+      SetParamElementInfo(PT_PAD_PRESET0 + i, k, (presetLabel(k) + "  <3").c_str(), static_cast<float>(k));
+      SetParamElementInfo(PT_PAD_PRESET0 + i, k, presetLabel(k).c_str(), static_cast<float>(k));
+    }
+    options(PT_PAD_PRESET0 + i, kNumPresets);
     SetParamInfo(PT_PAD0 + i, ("Pad " + n).c_str(), FF_TYPE_EVENT, 0.0f);
     SetParamGroup(PT_PAD_PRESET0 + i, "Pads");
     SetParamGroup(PT_PAD0 + i, "Pads");
@@ -306,15 +382,22 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
 
   SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
   SetParamGroup(PT_STATUS, "Status");
+  std::memcpy(frame_, values_, sizeof values_);
   syncFavorites(true);
 }
 
 // Rebuilds the Favorites dropdown when the shared list has changed (here or
-// in another instance), then points it at the preset that's up.
+// in another instance), then points it at the preset that's up. Render
+// thread (and the constructor) only, with stateMutex_ held.
 void Skillet::syncFavorites(bool force) {
+  if (!force && !favorites().changedSince(favsVersion_)) {
+    syncFavoriteValue();
+    return;
+  }
   std::vector<int> now;
   const unsigned v = favorites().snapshot(now);
   if (force || v != favsVersion_) {
+    const std::vector<int> was = force ? std::vector<int>() : favs_;
     favsVersion_ = v;
     favs_ = now;
     std::vector<std::string> names;
@@ -326,19 +409,26 @@ void Skillet::syncFavorites(bool force) {
       vals.push_back(static_cast<float>(i + 1));
     }
     SetParamElements(PT_FAV, names, vals, !force);
+    hi_[PT_FAV] = static_cast<float>(favs_.size());
     values_[PT_FAV] = -1;  // force the value event below
 
-    // Mark favorites with a heart in the Preset and Pad preset dropdowns.
-    std::vector<std::string> marked;
-    std::vector<float> idx;
+    // Mark favorites with "  <3" in the Preset and Pad preset dropdowns:
+    // only the entries whose mark changed, rewritten in place.
+    auto isFav = [](const std::vector<int>& l, int i) { return std::find(l.begin(), l.end(), i) != l.end(); };
+    bool changed = false;
     for (int i = 0; i < kNumPresets; i++) {
-      const bool fav = std::find(favs_.begin(), favs_.end(), i) != favs_.end();
-      marked.push_back(fav ? presetLabel(i) + "  <3" : presetLabel(i));
-      // plain ASCII: Resolume's UI font has no heart glyph and draws U+2665 blank
-      idx.push_back(static_cast<float>(i));
+      const bool fav = isFav(favs_, i);
+      if (!force && fav == isFav(was, i)) continue;
+      if (force && !fav) continue;
+      const std::string label = fav ? presetLabel(i) + "  <3" : presetLabel(i);
+      SetParamElementInfo(PT_PRESET, i, label.c_str(), static_cast<float>(i));
+      for (int pad = 0; pad < 16; pad++) SetParamElementInfo(PT_PAD_PRESET0 + pad, i, label.c_str(), static_cast<float>(i));
+      changed = true;
     }
-    SetParamElements(PT_PRESET, marked, idx, !force);
-    for (int i = 0; i < 16; i++) SetParamElements(PT_PAD_PRESET0 + i, marked, idx, !force);
+    if (changed && !force) {
+      RaiseParamEvent(PT_PRESET, FF_EVENT_FLAG_ELEMENTS);
+      for (int pad = 0; pad < 16; pad++) RaiseParamEvent(PT_PAD_PRESET0 + pad, FF_EVENT_FLAG_ELEMENTS);
+    }
   }
   syncFavoriteValue();
 }
@@ -367,7 +457,7 @@ unsigned Skillet::nextRandom() {
 // it: Documents\\SkilletNTSC-log.txt on Windows. A plugin that fails in a host
 // otherwise fails silently, and this is the only way to see why.
 static void writeLog(const std::string& text) {
-  if (FILE* f = std::fopen(docPath("SkilletNTSC-log.txt").c_str(), "wb")) {
+  if (FILE* f = openDoc("SkilletNTSC-log.txt", "wb")) {
     std::fwrite(text.data(), 1, text.size(), f);
     std::fclose(f);
   }
@@ -388,7 +478,7 @@ FFResult Skillet::InitGL(const FFGLViewportStruct* vp) {
     FFGLLog::LogToHost(("Skillet NTSC: " + engine_->error()).c_str());
     engine_.reset();
     RaiseParamEvent(PT_STATUS, FF_EVENT_FLAG_VALUE);
-    // Stay loaded so the Status field can say why; frames pass through.
+    // Stay loaded so the Status field can say why (the effect draws nothing).
     return CFFGLPlugin::InitGL(vp);
   }
   status_ = "Running on " + engine_->glInfo();
@@ -399,7 +489,10 @@ FFResult Skillet::InitGL(const FFGLViewportStruct* vp) {
     engine_->setCaption(caption_);
     captionDirty_ = false;
   }
-  loadPreset(currentPreset_, true);
+  {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    loadPreset(currentPreset_, true);
+  }
   return CFFGLPlugin::InitGL(vp);
 }
 
@@ -452,7 +545,7 @@ static bool isViewKey(int k) {
 // Perform knobs push on top, and the Assign knobs override outright.
 void Skillet::applyOverlay(void* p) const {
   Controls& c = *static_cast<Controls*>(p);
-  const double amount = values_[PT_AMOUNT];
+  const double amount = frame_[PT_AMOUNT];
   if (amount != 1.0) {
     for (int k = 0; k < kNumControls; k++) {
       if (isViewKey(k)) continue;
@@ -464,36 +557,36 @@ void Skillet::applyOverlay(void* p) const {
       }
     }
   }
-  const double noise = values_[PT_NOISE];
+  const double noise = frame_[PT_NOISE];
   if (noise > 0) c[C_noiseIre] = spanClamp(C_noiseIre, c[C_noiseIre] + noise * 30);
-  const double wob = values_[PT_WOBBLE];
+  const double wob = frame_[PT_WOBBLE];
   if (wob > 0) {
     c[C_tbJitterNs] = spanClamp(C_tbJitterNs, c[C_tbJitterNs] + wob * 500);
     c[C_tbWowNs] = spanClamp(C_tbWowNs, c[C_tbWowNs] + wob * 900);
   }
-  const double trk = values_[PT_TRACKING];
+  const double trk = frame_[PT_TRACKING];
   if (trk > 0) c[C_trackAmt] = std::max(c[C_trackAmt], trk);
-  const double roll = values_[PT_ROLL];
+  const double roll = frame_[PT_ROLL];
   if (roll != 0) {
     // detune the vertical oscillator and slacken the hold that would pull it in
     c[C_vFreqHz] = spanClamp(C_vFreqHz, c[C_vFreqHz] - roll * 1.5);
     c[C_vHold] = c[C_vHold] * (1 - std::abs(roll) * 0.97);
   }
-  const double bend = values_[PT_BEND];
+  const double bend = frame_[PT_BEND];
   if (bend > 0) c[C_bendUs] = spanClamp(C_bendUs, c[C_bendUs] + bend * 10);
-  const double tint = values_[PT_TINT];
+  const double tint = frame_[PT_TINT];
   if (tint != 0) c[C_tintDeg] = spanClamp(C_tintDeg, c[C_tintDeg] + tint);
-  const double color = values_[PT_COLOR];
+  const double color = frame_[PT_COLOR];
   if (color != 1) c[C_chromaGain] = spanClamp(C_chromaGain, c[C_chromaGain] * color);
-  const double cam = values_[PT_CAMLOOP];
+  const double cam = frame_[PT_CAMLOOP];
   if (cam > 0) c[C_fbMix] = std::max(c[C_fbMix], cam * 0.9);
-  const double time = values_[PT_TIME];
+  const double time = frame_[PT_TIME];
   if (time < 1) c[C_timeScale] = c[C_timeScale] * time;
   for (int i = 0; i < 4; i++) {
-    const int t = static_cast<int>(values_[PT_ASSIGN_T0 + i] + 0.5f) - 1;
-    if (t < 0 || t >= kNumControls) continue;
+    const int t = toIndex(frame_[PT_ASSIGN_T0 + i], kNumControls + 1) - 1;
+    if (t < 0) continue;
     const SliderSpan& s = kSliders[t];
-    double v = s.min + values_[PT_ASSIGN_V0 + i] * (s.max - s.min);
+    double v = s.min + frame_[PT_ASSIGN_V0 + i] * (s.max - s.min);
     if (s.step > 0) v = s.min + std::round((v - s.min) / s.step) * s.step;
     c[t] = spanClamp(t, v);
   }
@@ -529,6 +622,7 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   if (!engine_ || pGL->numInputTextures < needInputs) return FF_FAIL;
   for (unsigned i = 0; i < needInputs; i++)
     if (pGL->inputTextures[i] == nullptr) return FF_FAIL;
+  std::unique_lock<std::mutex> state(stateMutex_);
   syncFavorites(false);  // another instance may have changed the list
   {
     std::lock_guard<std::mutex> lock(captionMutex_);
@@ -568,7 +662,7 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
 #endif
 
   // Source A
-  const int srcA = std::max(0, std::min(kNumSourceA - 1, static_cast<int>(values_[PT_SOURCE_A] + 0.5f)));
+  const int srcA = indexOf(PT_SOURCE_A, kNumSourceA);
   InputFrame inA = layer;
   if (kSourceAPic[srcA] < 0) {
     engine_->setSourceA(srcA);  // the app's generators
@@ -578,7 +672,7 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   }
   // Source B. Auto feeds presets that mix two pictures: the layers below in
   // the mixer, the layer itself otherwise.
-  const int srcB = std::max(0, std::min(kNumSourceB - 1, static_cast<int>(values_[PT_SOURCE_B] + 0.5f)));
+  const int srcB = indexOf(PT_SOURCE_B, kNumSourceB);
   InputFrame inB = layer;
   SourceB b = SourceB::Off;
   if (srcB == 0) {
@@ -602,6 +696,10 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   out.width = static_cast<int>(currentViewport.width);
   out.height = static_cast<int>(currentViewport.height);
   out.fill = values_[PT_FILL] > 0.5f;
+  // the render works from this frame's copy; the host may set values
+  // meanwhile without waiting for the frame
+  std::memcpy(frame_, values_, sizeof values_);
+  state.unlock();
 
   SignalChain& ch = engine_->chain();
   ch.overlay = [this](Controls& c) { applyOverlay(&c); };
@@ -612,12 +710,15 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
 
 FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
   if (index >= PT_COUNT) return FF_FAIL;
+  if (!std::isfinite(value)) return FF_FAIL;
+  value = std::min(hi_[index], std::max(lo_[index], value));
+  std::lock_guard<std::mutex> lock(stateMutex_);
   const float prev = values_[index];
   values_[index] = value;
   const bool pressed = value > 0.5f && prev <= 0.5f;
   switch (index) {
     case PT_PRESET: {
-      const int p = std::max(0, std::min(kNumPresets - 1, static_cast<int>(value + 0.5f)));
+      const int p = toIndex(value, kNumPresets);
       if (p != currentPreset_) pendingPreset_ = p;
       break;
     }
@@ -634,21 +735,16 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
         pendingPreset_ = p;
       }
       break;
+    // the render thread picks the change up and rebuilds the lists
     case PT_FAV_ADD:
-      if (pressed) {
-        favorites().add(basePreset());
-        syncFavorites(false);
-      }
+      if (pressed) favorites().add(basePreset());
       break;
     case PT_FAV_REMOVE:
-      if (pressed) {
-        favorites().remove(basePreset());
-        syncFavorites(false);
-      }
+      if (pressed) favorites().remove(basePreset());
       break;
     case PT_FAV: {
       // entry 0 is the "(not a favorite)" marker; picking it does nothing
-      const int k = static_cast<int>(value + 0.5f);
+      const int k = toIndex(value, static_cast<int>(favs_.size()) + 1);
       if (k >= 1 && k <= static_cast<int>(favs_.size()) && favs_[k - 1] != basePreset()) pendingPreset_ = favs_[k - 1];
       else {
         values_[PT_FAV] = prev;  // snap back to what's actually up
@@ -681,7 +777,7 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
     default:
       if (index >= PT_PAD0 && index < PT_PAD0 + 16 && pressed) {
         const int slot = static_cast<int>(index - PT_PAD0);
-        pendingPreset_ = static_cast<int>(values_[PT_PAD_PRESET0 + slot] + 0.5f);
+        pendingPreset_ = indexOf(PT_PAD_PRESET0 + slot, kNumPresets);
       }
       break;
   }
@@ -694,6 +790,7 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
 
 float Skillet::GetFloatParameter(unsigned int index) {
   if (index >= PT_COUNT) return 0.0f;
+  std::lock_guard<std::mutex> lock(stateMutex_);
   if (index == PT_PRESET) return static_cast<float>(pendingPreset_ >= 0 ? pendingPreset_ : currentPreset_);
   return values_[index];
 }
@@ -715,29 +812,34 @@ char* Skillet::GetTextParameter(unsigned int index) {
   return const_cast<char*>(captionShown_.c_str());
 }
 
+// Every value is formatted here: the SDK's fallback shares one unterminated
+// 16-byte buffer between all instances.
 char* Skillet::GetParameterDisplay(unsigned int index) {
+  if (index >= PT_COUNT) return nullptr;
+  std::lock_guard<std::mutex> lock(stateMutex_);
   char buf[64];
+  const float v = values_[index];
   switch (index) {
     case PT_MORPH:
-      if (values_[PT_MORPH] < 0.05f) std::snprintf(buf, sizeof buf, "cut");
-      else std::snprintf(buf, sizeof buf, "%.1f s", values_[PT_MORPH]);
+      if (v < 0.05f) std::snprintf(buf, sizeof buf, "cut");
+      else std::snprintf(buf, sizeof buf, "%.1f s", v);
       break;
-    case PT_TINT: std::snprintf(buf, sizeof buf, "%+.0f deg", values_[PT_TINT]); break;
-    case PT_AMOUNT: std::snprintf(buf, sizeof buf, "%.0f%%", values_[PT_AMOUNT] * 100); break;
-    case PT_COLOR: std::snprintf(buf, sizeof buf, "x%.2f", values_[PT_COLOR]); break;
+    case PT_TINT: std::snprintf(buf, sizeof buf, "%+.0f deg", v); break;
+    case PT_AMOUNT: std::snprintf(buf, sizeof buf, "%.0f%%", v * 100); break;
+    case PT_COLOR: std::snprintf(buf, sizeof buf, "x%.2f", v); break;
     default:
       if (index >= PT_ASSIGN_V0 && index < PT_ASSIGN_V0 + 4) {
-        const int t = static_cast<int>(values_[PT_ASSIGN_T0 + (index - PT_ASSIGN_V0)] + 0.5f) - 1;
-        if (t >= 0 && t < kNumControls) {
+        const int t = indexOf(PT_ASSIGN_T0 + (index - PT_ASSIGN_V0), kNumControls + 1) - 1;
+        if (t >= 0) {
           const SliderSpan& s = kSliders[t];
-          const double v = s.min + values_[index] * (s.max - s.min);
-          std::snprintf(buf, sizeof buf, "%.3g", v);
-          break;
+          std::snprintf(buf, sizeof buf, "%.3g", s.min + v * (s.max - s.min));
+        } else {
+          std::snprintf(buf, sizeof buf, "-");
         }
-        std::snprintf(buf, sizeof buf, "-");
         break;
       }
-      return CFFGLPlugin::GetParameterDisplay(index);
+      std::snprintf(buf, sizeof buf, "%.2f", v);
+      break;
   }
   display_ = buf;
   return const_cast<char*>(display_.c_str());
