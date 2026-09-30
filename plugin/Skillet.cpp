@@ -18,9 +18,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <shlobj.h>
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "ole32.lib")
+std::wstring skilletDocumentsFolder();  // docs_folder.cpp
 #elif defined(__APPLE__)
 #include <dlfcn.h>
 #else
@@ -143,15 +141,7 @@ static void* getProc(const char* name) {
 // OneDrive redirection included), or $HOME elsewhere.
 #if defined(_WIN32)
 static std::wstring docPath(const char* name) {
-  std::wstring dir;
-  PWSTR p = nullptr;
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &p)) && p) dir = p;
-  if (p) CoTaskMemFree(p);
-  if (dir.empty()) {
-    wchar_t buf[MAX_PATH] = {};
-    const DWORD n = GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH);
-    if (n > 0 && n < MAX_PATH) dir = std::wstring(buf) + L"\\Documents";
-  }
+  const std::wstring dir = skilletDocumentsFolder();
   std::wstring w;
   for (const char* c = name; *c; c++) w += static_cast<wchar_t>(*c);  // names are ASCII
   return dir.empty() ? w : dir + L"\\" + w;
