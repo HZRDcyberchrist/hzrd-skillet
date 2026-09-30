@@ -342,6 +342,7 @@ void Engine::destroyResources() {
   DeleteFramebuffers(1, &drawFbo_);
   for (int i = 0; i < kNumPrograms; i++)
     if (programs_[i].id) DeleteProgram(programs_[i].id);
+  extras_.destroy();
 }
 
 bool Engine::build(GetProcFn getProc) {
@@ -388,6 +389,7 @@ bool Engine::build(GetProcFn getProc) {
   }
   if (!buildPrograms()) return false;
   createResources();
+  if (!extras_.init(error_)) return false;
   // The phosphor grain is fixed to the glass: baked once, read as a texel.
   const Program& gb = programs_[progIndex("grain_bake.main")];
   UseProgram(gb.id);
@@ -667,16 +669,29 @@ void Engine::runSimulation(const InputFrame& in) {
   if (g.caption) dispatch(P("caption.main", {R_PARAMS, R_COMPA, R_TIMING, R_CC}, one));
   dispatch(P("decode.main", {R_PARAMS, R_FILTERS, R_COMPA, R_LINEINFO, R_TIMING, T_OUT, R_PERSIST_READ, R_PERSIST_WRITE, R_AUDIO, R_CC}, perPixelT));
   dispatch(P("crt_face.main", {R_PARAMS, T_OUT_CRT, S_LINEAR, T_FACE, R_TIMING, T_GRAIN}, perTile));
+  if (post_.rose > 0.001f && post_.roseInLoop) {
+    // the disc goes back through the camera loop: next frame's compose reads it
+    extras_.roseInto(faceTex_, extras_.roseTemp(), post_);
+    BindFramebuffer(READ_FRAMEBUFFER, readFbo_);
+    FramebufferTexture2D(READ_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, extras_.roseTemp(), 0);
+    BindFramebuffer(DRAW_FRAMEBUFFER, drawFbo_);
+    FramebufferTexture2D(DRAW_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, faceTex_, 0);
+    BlitFramebuffer(0, 0, ACTIVE_WIDTH, ACTIVE_HEIGHT, 0, 0, ACTIVE_WIDTH, ACTIVE_HEIGHT, COLOR_BUFFER_BIT, NEAREST);
+    FramebufferTexture2D(READ_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, 0, 0);
+    FramebufferTexture2D(DRAW_FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, 0, 0);
+    BindFramebuffer(READ_FRAMEBUFFER, 0);
+    BindFramebuffer(DRAW_FRAMEBUFFER, 0);
+  }
   if (g.storePrev) dispatch(P("store_prev.main", {R_PARAMS, R_COMPA, R_COMPPREV}, perLine));
   haveFace_ = true;
 }
 
-void Engine::present(const OutputTarget& out, double, double) {
+void Engine::present(const OutputTarget& out, unsigned tex) {
   const int fs = progIndex("present.fs");
   UseProgram(programs_[fs].id);
   BindBufferBase(UNIFORM_BUFFER, 0, paramsUbo_);
   ActiveTexture(TEXTURE0);
-  BindTexture(TEXTURE_2D, faceTex_);
+  BindTexture(TEXTURE_2D, tex);
   BindSampler(0, sampler_);
   BindFramebuffer(FRAMEBUFFER, out.fbo);
   Viewport(out.x, out.y, out.width, out.height);
@@ -690,7 +705,16 @@ void Engine::present(const OutputTarget& out, double, double) {
   BindVertexArray(0);
 }
 
-void Engine::render(const InputFrame& in, const OutputTarget& out, double nowMs) {
+void Engine::captureComposite(std::vector<float>& out) {
+  out.assign(N_SAMPLES, 0.0f);
+  if (!ok_) return;
+  MemBarrier(ALL_BARRIER_BITS);
+  BindBuffer(SHADER_STORAGE_BUFFER, compA_);
+  GetBufferSubData(SHADER_STORAGE_BUFFER, 0, N_SAMPLES * 4, out.data());
+  BindBuffer(SHADER_STORAGE_BUFFER, 0);
+}
+
+void Engine::render(const InputFrame& in, const InputFrame& inB, const OutputTarget& out, double nowMs) {
   if (!ok_) return;
   if (srcNoiseA_ == 0) stageInput(in);
   FrameEnv env;
@@ -704,12 +728,27 @@ void Engine::render(const InputFrame& in, const OutputTarget& out, double nowMs)
   const int b = static_cast<int>(sourceB_);
   env.srcNoiseB = b >= 1 && b <= 3 ? b : 0;
   env.bEnabled = sourceB_ != SourceB::Off;
-  if (chain_->step(env)) {
-    runSimulation(in);
+  const bool stepped = chain_->step(env);
+  if (stepped) {
+    runSimulation(inB);
     renderedFrames_++;
-  } else if (out.fill ? false : false) {
-    // (a held frame re-presents the face as it stands)
   }
+  // (a held frame re-presents the face as it stands)
+  unsigned shown = faceTex_;
+  if (post_.rose > 0.001f && !post_.roseInLoop) {
+    extras_.roseInto(faceTex_, extras_.roseTemp(), post_);
+    shown = extras_.roseTemp();
+  }
+  if (clearReq_) {
+    extras_.clearShroud();
+    clearReq_ = false;
+  }
+  if (burnReq_) {
+    extras_.burnIn(shown);
+    burnReq_ = false;
+  }
+  if (stepped && post_.autoBurn > 0) extras_.burn(shown, post_.autoBurn * post_.autoBurn * 0.02f);
+  if (extras_.finishNeeded(post_)) shown = extras_.finish(shown, post_);
   // The canvas size lives in the uniform block; keep it current even on a
   // held frame so a resized output never draws with a stale aspect.
   {
@@ -719,7 +758,7 @@ void Engine::render(const InputFrame& in, const OutputTarget& out, double nowMs)
     BufferSubData(UNIFORM_BUFFER, P_canvasH * 4, 4, &chh);
     BindBuffer(UNIFORM_BUFFER, 0);
   }
-  present(out, env.canvasW, env.canvasH);
+  present(out, shown);
 
   // hand the context back in its default state (FFGL's rule), apart from the
   // caller's framebuffer, which stays bound

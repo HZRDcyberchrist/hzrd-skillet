@@ -87,7 +87,13 @@ using GLsizeiptr = std::ptrdiff_t;
   X(DeleteVertexArrays, void, (GLsizei, const GLuint*))                                              \
   X(BindVertexArray, void, (GLuint))                                                                 \
   X(DrawArrays, void, (GLenum, GLint, GLsizei))                                                      \
-  X(ColorMaski, void, (GLuint, GLboolean, GLboolean, GLboolean, GLboolean))
+  X(ColorMaski, void, (GLuint, GLboolean, GLboolean, GLboolean, GLboolean))                        \
+  X(GetUniformLocation, GLint, (GLuint, const GLchar*))                                              \
+  X(Uniform1i, void, (GLint, GLint))                                                                 \
+  X(Uniform1f, void, (GLint, GLfloat))                                                               \
+  X(Uniform2f, void, (GLint, GLfloat, GLfloat))                                                      \
+  X(Uniform4f, void, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                                    \
+  X(BlendFunc, void, (GLenum, GLenum))
 
 #define SKILLET_DECLARE(name, ret, params) \
   using PFN_##name = ret(SKILLET_APIENTRY*) params; \
@@ -111,7 +117,8 @@ constexpr GLenum DYNAMIC_DRAW = 0x88E8, STATIC_DRAW = 0x88E4, DYNAMIC_COPY = 0x8
 constexpr GLenum TEXTURE_2D = 0x0DE1, TEXTURE0 = 0x84C0;
 constexpr GLenum RGBA8 = 0x8058, SRGB8_ALPHA8 = 0x8C43, R32F = 0x822E, RGBA = 0x1908, RED = 0x1903, UNSIGNED_BYTE = 0x1401, FLOAT = 0x1406;
 constexpr GLenum TEXTURE_MIN_FILTER = 0x2801, TEXTURE_MAG_FILTER = 0x2800, TEXTURE_WRAP_S = 0x2802, TEXTURE_WRAP_T = 0x2803;
-constexpr GLint LINEAR = 0x2601, NEAREST = 0x2600, CLAMP_TO_EDGE = 0x812F;
+constexpr GLint LINEAR = 0x2601, NEAREST = 0x2600, CLAMP_TO_EDGE = 0x812F, REPEAT = 0x2901, MIRRORED_REPEAT = 0x8370;
+constexpr GLenum RGBA16F = 0x881A, HALF_FLOAT = 0x140B, SRC_ALPHA = 0x0302, ONE_MINUS_SRC_ALPHA = 0x0303;
 constexpr GLenum READ_ONLY = 0x88B8, WRITE_ONLY = 0x88B9, READ_WRITE = 0x88BA;
 constexpr GLbitfield ALL_BARRIER_BITS = 0xFFFFFFFF;
 constexpr GLenum FRAMEBUFFER = 0x8D40, READ_FRAMEBUFFER = 0x8CA8, DRAW_FRAMEBUFFER = 0x8CA9, COLOR_ATTACHMENT0 = 0x8CE0;

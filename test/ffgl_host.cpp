@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
+#include <thread>
 #include <string>
 #include <vector>
 #include <FFGL.h>
@@ -50,8 +52,21 @@ int main(int argc, char** argv) {
   TexSubImage2D(TEXTURE_2D, 0, 0, 0, 1280, 720, RGBA, UNSIGNED_BYTE, px.data()); BindTexture(TEXTURE_2D, 0);
   GLuint outTex; GenTextures(1, &outTex); BindTexture(TEXTURE_2D, outTex); TexStorage2D(TEXTURE_2D, 1, RGBA8, W, H); BindTexture(TEXTURE_2D, 0);
   GLuint fbo; GenFramebuffers(1, &fbo); BindFramebuffer(FRAMEBUFFER, fbo); FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, outTex, 0);
-  FFGLTextureStruct tex{1280, 720, 1280, 720, inTex}; FFGLTextureStruct* texs[1] = {&tex};
-  ProcessOpenGLStruct pgl{1, texs, fbo};
+  // a second input for the mixer: the test card mirrored left-right, standing
+  // in for "the layers below"
+  std::vector<uint8_t> px2(px.size());
+  for (int y = 0; y < 720; y++) for (int x = 0; x < 1280; x++) std::memcpy(&px2[(y * 1280 + x) * 4], &px[(y * 1280 + (1279 - x)) * 4], 4);
+  GLuint inTex2; GenTextures(1, &inTex2); BindTexture(TEXTURE_2D, inTex2); TexStorage2D(TEXTURE_2D, 1, RGBA8, 1280, 720);
+  TexSubImage2D(TEXTURE_2D, 0, 0, 0, 1280, 720, RGBA, UNSIGNED_BYTE, px2.data()); BindTexture(TEXTURE_2D, 0);
+  FFGLTextureStruct tex{1280, 720, 1280, 720, inTex}, tex2{1280, 720, 1280, 720, inTex2};
+  FFGLTextureStruct* texs[2] = {&tex2, &tex};  // mixer order: layers below, then the layer
+#if SKILLET_MIXER
+  ProcessOpenGLStruct pgl{2, texs, fbo};
+#else
+  FFGLTextureStruct* one[1] = {&tex};
+  ProcessOpenGLStruct pgl{1, one, fbo};
+  (void)texs;
+#endif
   // script: argv = sequence of commands: frames:N  set:<Name>=<v>  press:<Name>  events  elements:<Name>  shot:<file>
   for (int i = 1; i < argc; i++) {
     std::string cmd = argv[i];
@@ -66,6 +81,16 @@ int main(int argc, char** argv) {
     } else if (cmd.rfind("press:", 0) == 0) {
       int p = findParam(cmd.c_str() + 6); if (p < 0) { printf("no param %s\n", cmd.c_str() + 6); return 1; }
       setf(id, p, 1.0f); setf(id, p, 0.0f); printf("pressed %s\n", cmd.c_str() + 6);
+    } else if (cmd.rfind("text:", 0) == 0) {
+      size_t eq = cmd.find('='); std::string name = cmd.substr(5, eq - 5); std::string val = cmd.substr(eq + 1);
+      int p = findParam(name.c_str()); if (p < 0) { printf("no param %s\n", name.c_str()); return 1; }
+      SetParameterStruct st; st.ParameterNumber = p; st.NewParameterValue.PointerValue = const_cast<char*>(val.c_str());
+      call(FF_SET_PARAMETER, ptr(&st), id); printf("text %s=%s\n", name.c_str(), val.c_str());
+    } else if (cmd == "status") {
+      int p = findParam("Status"); const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
+      printf("status: %s\n", t ? t : "");
+    } else if (cmd.rfind("sleep:", 0) == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(atoi(cmd.c_str() + 6)));
     } else if (cmd == "events") {
       // what a host polls after each frame: which parameters changed on their own
       GetParamEventsStruct q{0, nullptr}; call(FF_GET_PARAMETER_EVENTS, ptr(&q), id);

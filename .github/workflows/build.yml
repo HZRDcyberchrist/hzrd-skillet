@@ -14,20 +14,24 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
-        run: cmake --build build --config Release --target SkilletNTSC
+        run: cmake --build build --config Release --target SkilletNTSC SkilletNTSC-Mixer
       - name: Check the export Resolume looks for
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $dumpbin = Get-ChildItem -Recurse "$vs\VC\Tools\MSVC" -Filter dumpbin.exe | Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
-          $exports = & $dumpbin.FullName /exports build\Release\SkilletNTSC.dll
-          $exports
-          if (-not ($exports -match 'plugMain')) { throw 'plugMain is not exported' }
+          foreach ($dll in @('SkilletNTSC.dll', 'SkilletNTSC-Mixer.dll')) {
+            $exports = & $dumpbin.FullName /exports "build\Release\$dll"
+            if (-not ($exports -match 'plugMain')) { throw "plugMain is not exported from $dll" }
+            $deps = & $dumpbin.FullName /dependents "build\Release\$dll"
+            $deps
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: SkilletNTSC-windows-x64
           path: |
             build/Release/SkilletNTSC.dll
+            build/Release/SkilletNTSC-Mixer.dll
             README.md
             LICENSE
             THIRD_PARTY_NOTICES.md
@@ -56,4 +60,7 @@ jobs:
         working-directory: test
         run: |
           python3 make_testcard.py
-          ../build/skillet_ffgl_host frames:3 "set:Preset=1" frames:10 shot:vhs.ppm "press:Pad 10" frames:10 shot:spiral.ppm
+          ../build/skillet_ffgl_host frames:3 "set:Preset=1" frames:10 shot:vhs.ppm "press:Pad 10" frames:10 shot:spiral.ppm \
+            "set:Source A=4" "set:Rose window=1" "set:Vigil=1" "press:Burn in" "set:Shroud=1" frames:8 shot:extras.ppm \
+            "press:Signal to STL" frames:1 status sleep:3000
+          ../build/skillet_ffgl_host_mixer frames:2 "set:Ghost station=1" frames:10 shot:ghost.ppm "set:Source A=9" frames:4 shot:below.ppm

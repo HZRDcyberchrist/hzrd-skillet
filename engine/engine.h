@@ -4,8 +4,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "chain.h"
+#include "extras.h"
 #include "glapi.h"
 
 namespace skillet {
@@ -54,7 +56,19 @@ class Engine {
   // timeScale is holding it), and draws the tube into `out`. Leaves the GL
   // context in its default state apart from the output framebuffer binding
   // the caller had.
-  void render(const InputFrame& in, const OutputTarget& out, double nowMs);
+  void render(const InputFrame& in, const OutputTarget& out, double nowMs) { render(in, in, out, nowMs); }
+  // `inB` is the picture Source B's "layer copy" takes (the layer itself, the
+  // layers below in the mixer, a Spout sender or a generator).
+  void render(const InputFrame& in, const InputFrame& inB, const OutputTarget& out, double nowMs);
+
+  // Generators and the face passes (extras.h)
+  Extras& extras() { return extras_; }
+  void setPost(const PostSettings& p) { post_ = p; }
+  void burnIn() { burnReq_ = true; }
+  void clearShroud() { clearReq_ = true; }
+  // The composite waveform as it stands (525 lines x 910 samples, IRE-scaled
+  // volts), for Signal to STL.
+  void captureComposite(std::vector<float>& out);
 
   // Clears every buffer and texture the path carries state in (the tape ring,
   // phosphor, the frame store, the sync flywheel) and restarts the CPU state.
@@ -79,7 +93,7 @@ class Engine {
   void bindPass(const Pass& p, int encodeTarget);
   void dispatch(const Pass& p);
   void runSimulation(const InputFrame& in);
-  void present(const OutputTarget& out, double canvasW, double canvasH);
+  void present(const OutputTarget& out, unsigned tex);
   void clearTexture(unsigned tex);
   unsigned bufOf(int r) const;
   unsigned texOf(int r) const;
@@ -111,6 +125,9 @@ class Engine {
   double srcAspect_ = 4.0 / 3.0;
   uint32_t renderedFrames_ = 0;
   bool haveFace_ = false;
+  Extras extras_;
+  PostSettings post_;
+  bool burnReq_ = false, clearReq_ = false;
 };
 
 } // namespace skillet

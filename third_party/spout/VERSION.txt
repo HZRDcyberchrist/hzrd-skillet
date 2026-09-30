@@ -1,0 +1,1 @@
+Spout2 SDK (SPOUTSDK/SpoutGL) from https://github.com/leadedge/Spout2 @ c2bcc12

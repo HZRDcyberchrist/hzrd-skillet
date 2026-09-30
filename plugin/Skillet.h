@@ -20,8 +20,11 @@
 #include <string>
 #include <vector>
 
+#include "spout_source.h"
+
 namespace skillet {
 class Engine;
+struct InputFrame;
 }
 
 class Skillet : public CFFGLPlugin {
@@ -46,6 +49,10 @@ class Skillet : public CFFGLPlugin {
   int basePreset() const { return pendingPreset_ >= 0 ? pendingPreset_ : currentPreset_; }
   void syncFavorites(bool force);
   void syncFavoriteValue();
+  bool pictureFor(int kind, int slot, const skillet::InputFrame& layer, const skillet::InputFrame& below,
+                  unsigned hostFbo, skillet::InputFrame& out);
+  void refreshSpoutList(bool force);
+  void setStatus(const std::string& s);
 
   std::unique_ptr<skillet::Engine> engine_;
   std::chrono::steady_clock::time_point t0_;
@@ -59,6 +66,14 @@ class Skillet : public CFFGLPlugin {
   bool pendingReset_ = false;
   unsigned rng_ = 0x2545F491u;
   unsigned nextRandom();
+  std::string patternPath_;
+  bool patternDirty_ = false;
+  bool pendingBurn_ = false, pendingClear_ = false, pendingRelic_ = false;
+  double roseAngle_ = 0, lastMs_ = -1;
+  double flame_ = 0;  // the candle's flicker this frame, -1..1
+  SpoutSource spout_;
+  std::vector<std::string> spoutNames_;
+  int spoutPoll_ = 0;
   std::vector<int> favs_;       // this instance's copy of the shared favorites
   unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
 };
