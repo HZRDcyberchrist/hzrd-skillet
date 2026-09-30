@@ -28,18 +28,19 @@ using namespace skillet;
 // ── parameter layout ──
 enum : unsigned {
   PT_PRESET = 0,
-  PT_MORPH,
   PT_PREV,
   PT_NEXT,
   PT_RANDOM,
-  PT_AMOUNT,
-  // favorites: a shared list of starred presets with its own dropdown and buttons
-  PT_FAV_ADD,
-  PT_FAV_REMOVE,
+  // favorites: a shared list of starred presets with its own dropdown and
+  // buttons, laid out right under the catalogue's
   PT_FAV,
   PT_FAV_PREV,
   PT_FAV_NEXT,
   PT_FAV_RANDOM,
+  PT_FAV_ADD,
+  PT_FAV_REMOVE,
+  PT_MORPH,
+  PT_AMOUNT,
   // performance knobs over the preset
   PT_NOISE,
   PT_WOBBLE,
@@ -211,7 +212,6 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_RANDOM, "Random", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_AMOUNT, "Amount", FF_TYPE_STANDARD, values_[PT_AMOUNT]);
   SetParamRange(PT_AMOUNT, 0, 2);
-  for (unsigned p : {PT_PRESET, PT_MORPH, PT_PREV, PT_NEXT, PT_RANDOM, PT_AMOUNT}) SetParamGroup(p, "Preset");
 
   // Favorites. The dropdown's first entry says whether the preset that's up
   // is one of them; the rest are the favorites, rebuilt whenever the list
@@ -223,7 +223,7 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_FAV_PREV, "Fav prev", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_FAV_NEXT, "Fav next", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_FAV_RANDOM, "Fav random", FF_TYPE_EVENT, 0.0f);
-  for (unsigned p = PT_FAV_ADD; p <= PT_FAV_RANDOM; p++) SetParamGroup(p, "Favorites");
+  for (unsigned p = PT_PRESET; p <= PT_AMOUNT; p++) SetParamGroup(p, "Preset");
 
   // Performance
   SetParamInfo(PT_NOISE, "Noise", FF_TYPE_STANDARD, 0.0f);

@@ -37,7 +37,7 @@ The DLL lands in `build\Release\SkilletNTSC.dll`.
 | Prev / Next / Random | Step through or jump around the catalogue |
 | Amount | 0 is a clean signal, 100% is the preset as authored, up to 200% exaggerates it |
 
-**Favorites**: your own shortlist of presets, with its own dropdown and buttons.
+Also under **Preset**, right below Prev / Next / Random, your favorites: a shortlist of presets with its own dropdown and buttons.
 | Control | What it does |
 |---|---|
 | Add favorite / Remove favorite | Adds the preset that's up to your favorites, or takes it off. Favorites get a `<3` in the Preset and Pad preset dropdowns |
