@@ -297,6 +297,17 @@ void Skillet::syncFavorites(bool force) {
     }
     SetParamElements(PT_FAV, names, vals, !force);
     values_[PT_FAV] = -1;  // force the value event below
+
+    // Mark favorites with a heart in the Preset and Pad preset dropdowns.
+    std::vector<std::string> marked;
+    std::vector<float> idx;
+    for (int i = 0; i < kNumPresets; i++) {
+      const bool fav = std::find(favs_.begin(), favs_.end(), i) != favs_.end();
+      marked.push_back(fav ? "\xE2\x99\xA5 " + presetLabel(i) : presetLabel(i));  // U+2665 heart
+      idx.push_back(static_cast<float>(i));
+    }
+    SetParamElements(PT_PRESET, marked, idx, !force);
+    for (int i = 0; i < 16; i++) SetParamElements(PT_PAD_PRESET0 + i, marked, idx, !force);
   }
   syncFavoriteValue();
 }

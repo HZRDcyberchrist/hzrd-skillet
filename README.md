@@ -40,7 +40,7 @@ The DLL lands in `build\Release\SkilletNTSC.dll`.
 **Favorites**: your own shortlist of presets, with its own dropdown and buttons.
 | Control | What it does |
 |---|---|
-| Add favorite / Remove favorite | Adds the preset that's up to your favorites, or takes it off |
+| Add favorite / Remove favorite | Adds the preset that's up to your favorites, or takes it off. Favorites get a ♥ in the Preset and Pad preset dropdowns |
 | Favorites | Your favorites, in the order you added them. Shows "(not a favorite)" when the preset that's up isn't one |
 | Fav prev / Fav next / Fav random | Step through or jump around your favorites only |
 
