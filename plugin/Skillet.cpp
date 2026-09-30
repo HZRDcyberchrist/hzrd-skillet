@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 #include "../engine/engine.h"
 
@@ -31,6 +33,13 @@ enum : unsigned {
   PT_NEXT,
   PT_RANDOM,
   PT_AMOUNT,
+  // favorites: a shared list of starred presets with its own dropdown and buttons
+  PT_FAV_ADD,
+  PT_FAV_REMOVE,
+  PT_FAV,
+  PT_FAV_PREV,
+  PT_FAV_NEXT,
+  PT_FAV_RANDOM,
   // performance knobs over the preset
   PT_NOISE,
   PT_WOBBLE,
@@ -99,6 +108,81 @@ static void* getProc(const char* name) {
 #endif
 }
 
+// Documents\<name> on Windows, $HOME/<name> elsewhere.
+static std::string docPath(const char* name) {
+#if defined(_WIN32)
+  char buf[MAX_PATH] = {};
+  const DWORD n = GetEnvironmentVariableA("USERPROFILE", buf, MAX_PATH);
+  if (n > 0 && n < MAX_PATH) return std::string(buf) + "\\Documents\\" + name;
+  return name;
+#else
+  const char* home = std::getenv("HOME");
+  return std::string(home ? home : ".") + "/" + name;
+#endif
+}
+
+// ── favorites ──
+// One list shared by every Skillet instance in the process and kept in
+// Documents\SkilletNTSC-favorites.txt (one preset name per line, in the order
+// they were added), so favorites survive restarts and follow you across
+// compositions. The file can be edited by hand while Resolume is closed.
+namespace {
+struct FavoriteStore {
+  std::mutex m;
+  std::vector<int> list;
+  unsigned version = 0;  // 0 = not read from disk yet
+
+  void loadLocked() {
+    version = 1;
+    list.clear();
+    if (FILE* f = std::fopen(docPath("SkilletNTSC-favorites.txt").c_str(), "rb")) {
+      char line[256];
+      while (std::fgets(line, sizeof line, f)) {
+        std::string n(line);
+        while (!n.empty() && (n.back() == '\n' || n.back() == '\r' || n.back() == ' ')) n.pop_back();
+        for (int i = 0; i < kNumPresets; i++)
+          if (n == kPresets[i].name && std::find(list.begin(), list.end(), i) == list.end()) list.push_back(i);
+      }
+      std::fclose(f);
+    }
+  }
+  void saveLocked() const {
+    if (FILE* f = std::fopen(docPath("SkilletNTSC-favorites.txt").c_str(), "wb")) {
+      for (int i : list) std::fprintf(f, "%s\n", kPresets[i].name);
+      std::fclose(f);
+    }
+  }
+  // copy of the list, and its revision
+  unsigned snapshot(std::vector<int>& out) {
+    std::lock_guard<std::mutex> lock(m);
+    if (version == 0) loadLocked();
+    out = list;
+    return version;
+  }
+  void add(int preset) {
+    std::lock_guard<std::mutex> lock(m);
+    if (version == 0) loadLocked();
+    if (std::find(list.begin(), list.end(), preset) != list.end()) return;
+    list.push_back(preset);
+    version++;
+    saveLocked();
+  }
+  void remove(int preset) {
+    std::lock_guard<std::mutex> lock(m);
+    if (version == 0) loadLocked();
+    auto it = std::find(list.begin(), list.end(), preset);
+    if (it == list.end()) return;
+    list.erase(it);
+    version++;
+    saveLocked();
+  }
+};
+FavoriteStore& favorites() {
+  static FavoriteStore store;
+  return store;
+}
+}  // namespace
+
 Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetMinInputs(1);
   SetMaxInputs(1);
@@ -128,6 +212,18 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_AMOUNT, "Amount", FF_TYPE_STANDARD, values_[PT_AMOUNT]);
   SetParamRange(PT_AMOUNT, 0, 2);
   for (unsigned p : {PT_PRESET, PT_MORPH, PT_PREV, PT_NEXT, PT_RANDOM, PT_AMOUNT}) SetParamGroup(p, "Preset");
+
+  // Favorites. The dropdown's first entry says whether the preset that's up
+  // is one of them; the rest are the favorites, rebuilt whenever the list
+  // changes (syncFavorites).
+  SetParamInfo(PT_FAV_ADD, "Add favorite", FF_TYPE_EVENT, 0.0f);
+  SetParamInfo(PT_FAV_REMOVE, "Remove favorite", FF_TYPE_EVENT, 0.0f);
+  SetOptionParamInfo(PT_FAV, "Favorites", 1, 0);
+  SetParamElementInfo(PT_FAV, 0, "(no favorites yet)", 0);
+  SetParamInfo(PT_FAV_PREV, "Fav prev", FF_TYPE_EVENT, 0.0f);
+  SetParamInfo(PT_FAV_NEXT, "Fav next", FF_TYPE_EVENT, 0.0f);
+  SetParamInfo(PT_FAV_RANDOM, "Fav random", FF_TYPE_EVENT, 0.0f);
+  for (unsigned p = PT_FAV_ADD; p <= PT_FAV_RANDOM; p++) SetParamGroup(p, "Favorites");
 
   // Performance
   SetParamInfo(PT_NOISE, "Noise", FF_TYPE_STANDARD, 0.0f);
@@ -179,22 +275,57 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
 
   SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
   SetParamGroup(PT_STATUS, "Status");
+
+  syncFavorites(true);
+}
+
+// Rebuilds the Favorites dropdown when the shared list has changed (here or
+// in another instance), then points it at the preset that's up.
+void Skillet::syncFavorites(bool force) {
+  std::vector<int> now;
+  const unsigned v = favorites().snapshot(now);
+  if (force || v != favsVersion_) {
+    favsVersion_ = v;
+    favs_ = now;
+    std::vector<std::string> names;
+    std::vector<float> vals;
+    names.push_back(favs_.empty() ? "(no favorites yet)" : "(not a favorite)");
+    vals.push_back(0);
+    for (size_t i = 0; i < favs_.size(); i++) {
+      names.push_back(presetLabel(favs_[i]));
+      vals.push_back(static_cast<float>(i + 1));
+    }
+    SetParamElements(PT_FAV, names, vals, !force);
+    values_[PT_FAV] = -1;  // force the value event below
+  }
+  syncFavoriteValue();
+}
+
+// The Favorites dropdown shows the preset that's up when it is a favorite,
+// and "(not a favorite)" when it isn't.
+void Skillet::syncFavoriteValue() {
+  const int preset = basePreset();
+  float want = 0;
+  for (size_t i = 0; i < favs_.size(); i++)
+    if (favs_[i] == preset) want = static_cast<float>(i + 1);
+  if (values_[PT_FAV] != want) {
+    values_[PT_FAV] = want;
+    RaiseParamEvent(PT_FAV, FF_EVENT_FLAG_VALUE);
+  }
+}
+
+unsigned Skillet::nextRandom() {
+  rng_ ^= rng_ << 13;
+  rng_ ^= rng_ >> 17;
+  rng_ ^= rng_ << 5;
+  return rng_;
 }
 
 // Everything the engine reported at startup, written where a user can find
-// it: Documents\SkilletNTSC-log.txt on Windows. A plugin that fails in a host
+// it: Documents\\SkilletNTSC-log.txt on Windows. A plugin that fails in a host
 // otherwise fails silently, and this is the only way to see why.
 static void writeLog(const std::string& text) {
-  std::string path;
-#if defined(_WIN32)
-  char buf[MAX_PATH] = {};
-  const DWORD n = GetEnvironmentVariableA("USERPROFILE", buf, MAX_PATH);
-  path = n > 0 && n < MAX_PATH ? std::string(buf) + "\\Documents\\SkilletNTSC-log.txt" : "SkilletNTSC-log.txt";
-#else
-  const char* home = std::getenv("HOME");
-  path = std::string(home ? home : ".") + "/SkilletNTSC-log.txt";
-#endif
-  if (FILE* f = std::fopen(path.c_str(), "wb")) {
+  if (FILE* f = std::fopen(docPath("SkilletNTSC-log.txt").c_str(), "wb")) {
     std::fwrite(text.data(), 1, text.size(), f);
     std::fclose(f);
   }
@@ -240,6 +371,7 @@ void Skillet::loadPreset(int index, bool cut) {
   // Tell the host the dropdown's value moved, so Prev/Next/Random and the
   // pads show the preset they landed on (FFGL value-change event).
   RaiseParamEvent(PT_PRESET, FF_EVENT_FLAG_VALUE);
+  syncFavoriteValue();
   if (!engine_) return;
   Controls to;
   const Preset& p = kPresets[index];
@@ -323,6 +455,7 @@ void Skillet::applyOverlay(void* p) const {
 
 FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   if (!engine_ || pGL->numInputTextures < 1 || pGL->inputTextures[0] == nullptr) return FF_FAIL;
+  syncFavorites(false);  // another instance may have changed the list
   if (pendingReset_) {
     engine_->resetSignal();
     pendingReset_ = false;
@@ -375,19 +508,57 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
       break;
     }
     case PT_PREV:
-      if (pressed) pendingPreset_ = (currentPreset_ + kNumPresets - 1) % kNumPresets;
+      if (pressed) pendingPreset_ = (basePreset() + kNumPresets - 1) % kNumPresets;
       break;
     case PT_NEXT:
-      if (pressed) pendingPreset_ = (currentPreset_ + 1) % kNumPresets;
+      if (pressed) pendingPreset_ = (basePreset() + 1) % kNumPresets;
       break;
     case PT_RANDOM:
       if (pressed) {
-        rng_ ^= rng_ << 13;
-        rng_ ^= rng_ >> 17;
-        rng_ ^= rng_ << 5;
-        int p = static_cast<int>(rng_ % (kNumPresets - 1)) + 1;  // never the clean board
-        if (p == currentPreset_) p = (p % (kNumPresets - 1)) + 1;
+        int p = static_cast<int>(nextRandom() % (kNumPresets - 1)) + 1;  // never the clean board
+        if (p == basePreset()) p = (p % (kNumPresets - 1)) + 1;
         pendingPreset_ = p;
+      }
+      break;
+    case PT_FAV_ADD:
+      if (pressed) {
+        favorites().add(basePreset());
+        syncFavorites(false);
+      }
+      break;
+    case PT_FAV_REMOVE:
+      if (pressed) {
+        favorites().remove(basePreset());
+        syncFavorites(false);
+      }
+      break;
+    case PT_FAV: {
+      // entry 0 is the "(not a favorite)" marker; picking it does nothing
+      const int k = static_cast<int>(value + 0.5f);
+      if (k >= 1 && k <= static_cast<int>(favs_.size()) && favs_[k - 1] != basePreset()) pendingPreset_ = favs_[k - 1];
+      else {
+        values_[PT_FAV] = prev;  // snap back to what's actually up
+        RaiseParamEvent(PT_FAV, FF_EVENT_FLAG_VALUE);
+      }
+      break;
+    }
+    case PT_FAV_PREV:
+    case PT_FAV_NEXT:
+      if (pressed && !favs_.empty()) {
+        const int n = static_cast<int>(favs_.size());
+        const int at = static_cast<int>(std::find(favs_.begin(), favs_.end(), basePreset()) - favs_.begin());
+        int k;
+        if (at == n) k = index == PT_FAV_NEXT ? 0 : n - 1;  // not on a favorite: start at an end
+        else k = index == PT_FAV_NEXT ? (at + 1) % n : (at + n - 1) % n;
+        if (favs_[k] != basePreset()) pendingPreset_ = favs_[k];
+      }
+      break;
+    case PT_FAV_RANDOM:
+      if (pressed && !favs_.empty()) {
+        const int n = static_cast<int>(favs_.size());
+        int k = static_cast<int>(nextRandom() % n);
+        if (n > 1 && favs_[k] == basePreset()) k = (k + 1 + static_cast<int>(nextRandom() % (n - 1))) % n;
+        if (favs_[k] != basePreset()) pendingPreset_ = favs_[k];
       }
       break;
     case PT_RESET:
@@ -400,7 +571,10 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
       }
       break;
   }
-  if (pendingPreset_ >= 0) pendingCut_ = false;
+  if (pendingPreset_ >= 0) {
+    pendingCut_ = false;
+    syncFavoriteValue();
+  }
   return FF_SUCCESS;
 }
 

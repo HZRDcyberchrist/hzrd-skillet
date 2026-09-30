@@ -18,6 +18,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace skillet {
 class Engine;
@@ -42,6 +43,9 @@ class Skillet : public CFFGLPlugin {
   double nowMs() const;
   void loadPreset(int index, bool cut);
   void applyOverlay(void* controls) const;
+  int basePreset() const { return pendingPreset_ >= 0 ? pendingPreset_ : currentPreset_; }
+  void syncFavorites(bool force);
+  void syncFavoriteValue();
 
   std::unique_ptr<skillet::Engine> engine_;
   std::chrono::steady_clock::time_point t0_;
@@ -54,4 +58,7 @@ class Skillet : public CFFGLPlugin {
   bool pendingCut_ = false;
   bool pendingReset_ = false;
   unsigned rng_ = 0x2545F491u;
+  unsigned nextRandom();
+  std::vector<int> favs_;       // this instance's copy of the shared favorites
+  unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
 };

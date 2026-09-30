@@ -37,6 +37,15 @@ The DLL lands in `build\Release\SkilletNTSC.dll`.
 | Prev / Next / Random | Step through or jump around the catalogue |
 | Amount | 0 is a clean signal, 100% is the preset as authored, up to 200% exaggerates it |
 
+**Favorites**: your own shortlist of presets, with its own dropdown and buttons.
+| Control | What it does |
+|---|---|
+| Add favorite / Remove favorite | Adds the preset that's up to your favorites, or takes it off |
+| Favorites | Your favorites, in the order you added them. Shows "(not a favorite)" when the preset that's up isn't one |
+| Fav prev / Fav next / Fav random | Step through or jump around your favorites only |
+
+Favorites are kept in `Documents\SkilletNTSC-favorites.txt`, so every copy of the effect shares them and they survive restarts and new compositions.
+
 **Perform**: live knobs on top of whatever preset is up.
 | Control | What it does |
 |---|---|
@@ -71,6 +80,7 @@ Every control above can be mapped. In Resolume, turn on MIDI mapping (Shortcuts 
 - **One pad per preset**: choose a preset in each "Pad N preset" dropdown, then map the **Pad N** buttons to your controller's pads. Pressing a pad morphs to its preset (set Morph to 0 for hard cuts).
 - **Scroll the catalogue**: map a knob or fader to **Preset**.
 - **Buttons**: map Prev, Next and Random to buttons.
+- **Favorites**: star looks with Add favorite, then map Fav prev, Fav next and Fav random to buttons to play only those.
 - **Knobs**: map Amount, the Perform knobs and Knob 1–4 to your controller's encoders or faders.
 
 The plugin saves with your composition like any Resolume effect, so pad assignments come back when you reopen it.

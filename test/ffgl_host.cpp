@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
   GLuint fbo; GenFramebuffers(1, &fbo); BindFramebuffer(FRAMEBUFFER, fbo); FramebufferTexture2D(FRAMEBUFFER, COLOR_ATTACHMENT0, TEXTURE_2D, outTex, 0);
   FFGLTextureStruct tex{1280, 720, 1280, 720, inTex}; FFGLTextureStruct* texs[1] = {&tex};
   ProcessOpenGLStruct pgl{1, texs, fbo};
-  // script: argv = sequence of commands: frames:N  set:<Name>=<v>  press:<Name>  shot:<file>
+  // script: argv = sequence of commands: frames:N  set:<Name>=<v>  press:<Name>  events  elements:<Name>  shot:<file>
   for (int i = 1; i < argc; i++) {
     std::string cmd = argv[i];
     if (cmd.rfind("frames:", 0) == 0) {
@@ -77,6 +77,18 @@ int main(int argc, char** argv) {
         printf("event: %s flags=0x%llx value=%g\n", pn ? pn : "?", (unsigned long long)ev[k].eventFlags, fv);
       }
       if (g.numEvents == 0) puts("event: none");
+    } else if (cmd.rfind("elements:", 0) == 0) {
+      // an option parameter's current entries, as the host would list them
+      int p = findParam(cmd.c_str() + 9); if (p < 0) { printf("no param %s\n", cmd.c_str() + 9); return 1; }
+      unsigned ne = call(FF_GET_NUM_PARAMETER_ELEMENTS, u(p), id).UIntValue;
+      FFMixed v = call(FF_GET_PARAMETER, u(p), id); float fv; std::memcpy(&fv, &v.UIntValue, 4);
+      printf("%s = %g, %u entries:", cmd.c_str() + 9, fv, ne);
+      for (unsigned k = 0; k < ne; k++) {
+        GetParameterElementNameStruct q{(FFUInt32)p, k};
+        const char* en = (const char*)call(FF_GET_PARAMETER_ELEMENT_NAME, ptr(&q), id).PointerValue;
+        printf(" [%s]", en ? en : "?");
+      }
+      puts("");
     } else if (cmd.rfind("shot:", 0) == 0) {
       std::vector<uint8_t> o(W * H * 4); BindFramebuffer(FRAMEBUFFER, fbo); PixelStorei(PACK_ALIGNMENT, 1); ReadPixels(0, 0, W, H, RGBA, UNSIGNED_BYTE, o.data());
       FILE* w = fopen(cmd.c_str() + 5, "wb"); fprintf(w, "P6\n%d %d\n255\n", W, H);
