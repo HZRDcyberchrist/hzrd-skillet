@@ -9,6 +9,9 @@ WHAT YOU NEED
 
 INSTALL
   1. Quit Resolume.
+     Upgrading from an existing HZRD//Skillet version? Replace both DLLs in the SAME
+     folder where you installed that version. If it is in a version-named
+     subfolder, replace them there. Do not leave two versions installed.
   2. Copy HZRD-Skillet.dll and HZRD-Skillet-Mixer.dll into
        Documents\Resolume Arena\Extra Effects
      (or Documents\Resolume Avenue\Extra Effects).
@@ -32,6 +35,14 @@ AUDIO
   to react to whatever your computer plays, or choose a microphone, line in
   or audio interface. Then turn up Kick > roll, Kick > bloom, Level > tear
   or the Wave knobs. The Audio meter shows that sound is arriving.
+  All audio options live together in one Audio group. Choose Audio focus
+  (Kick, Bass, Mids, Highs or Custom band), then raise Reactive line above
+  the sounds you want to ignore. Band low / Band high set a Custom band.
+  Optionally press Audio scope to see the waveform, recent level and
+  frequencies, and drag its amber threshold line. These edits save
+  with your Resolume composition. Full mix and 0% keep the original response.
+  The scope stays on top. Clicking or restoring it also restores Resolume
+  if minimized. Confirm keeps your settings and closes the viewer.
 
 MIDI
   Shortcuts > Edit MIDI, click any control, then move the pad, knob or fader

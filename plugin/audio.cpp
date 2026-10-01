@@ -13,6 +13,32 @@ namespace hzrdaudio {
 
 constexpr double kPi = 3.14159265358979323846;
 
+double frequencyFromControl(double v) {
+  return 20 * std::pow(800.0, std::clamp(std::isfinite(v) ? v : 0.0, 0.0, 1.0));
+}
+double frequencyToControl(double hz) {
+  return std::clamp(std::log(std::clamp(std::isfinite(hz) ? hz : 20.0, 20.0, 16000.0) / 20) / std::log(800.0), 0.0, 1.0);
+}
+Band focusBand(const Settings& s, double sr) {
+  Band b{0, 200};  // Full mix keeps the original low-frequency onset detector
+  switch (s.focus) {
+    case Focus::Kick: b = {35, 150}; break;
+    case Focus::Bass: b = {30, 250}; break;
+    case Focus::Mids: b = {250, 2000}; break;
+    case Focus::Highs: b = {2000, 16000}; break;
+    case Focus::Custom: b = {s.lowHz, s.highHz}; break;
+    default: break;
+  }
+  if (!std::isfinite(b.low)) b.low = 35;
+  if (!std::isfinite(b.high)) b.high = 250;
+  if (!(sr > 0) || !std::isfinite(sr)) sr = 48000;
+  if (b.low > b.high) std::swap(b.low, b.high);
+  const double nyquist = sr * 0.5;
+  b.low = std::clamp(b.low, 0.0, nyquist * 0.98);
+  b.high = std::clamp(b.high, b.low + std::min(1.0, nyquist * 0.01), nyquist);
+  return b;
+}
+
 // ── capture: one per device, shared (audio_capture.h) ──
 
 #if !defined(_WIN32)
@@ -204,15 +230,30 @@ Analyzer::Analyzer() : peak_(PEAK_FLOOR), hitRef_(HIT_FLOOR) {
 void Analyzer::reset() {
   std::fill(std::begin(lines_), std::end(lines_), 0.0f);
   std::fill(smooth_.begin(), smooth_.end(), 0.0);
-  level = hit = 0;
+  level = hit = detectedLevel = 0;
+  waveform.fill(0);
+  focusedWaveform.fill(0);
+  spectrum.fill(0);
+  gate_ = 0;
   peak_ = PEAK_FLOOR;
   lowPrev_ = 0;
   hitRef_ = HIT_FLOOR;
 }
 
-void Analyzer::update(const float* w, double sampleRate, double gain) {
-  if (!(sampleRate > 0)) sampleRate = 48000;
+void Analyzer::update(const float* w, double sampleRate, double gain, const Settings& settings) {
+  if (!(sampleRate > 0) || !std::isfinite(sampleRate)) sampleRate = 48000;
+  sampleRate = std::clamp(sampleRate, 1000.0, 384000.0);
   if (!std::isfinite(gain)) gain = 1;
+  gain = std::clamp(gain, 0.0, 16.0);
+  Settings s = settings;
+  s.threshold = std::clamp(std::isfinite(s.threshold) ? s.threshold : 0.0, 0.0, 1.0);
+  if (s.focus != lastSettings_.focus || s.lowHz != lastSettings_.lowHz || s.highHz != lastSettings_.highHz ||
+      sampleRate != lastSampleRate_) reset();
+  lastSettings_ = s;
+  lastSampleRate_ = sampleRate;
+  const Band band = focusBand(s, sampleRate);
+  const bool full = s.focus == Focus::FullMix;
+  if (!full) filter(w, sampleRate, band);
   // the most recent field's worth of audio, down to one sample per line
   const int field = static_cast<int>(std::lround(sampleRate / 60));
   const int span = std::max(1, std::min(WINDOW, field));
@@ -221,23 +262,40 @@ void Analyzer::update(const float* w, double sampleRate, double gain) {
   for (int row = 0; row < LINES; row++) {
     float v = w[start + static_cast<int>(std::floor(static_cast<double>(row) / LINES * span))];
     if (!std::isfinite(v)) v = 0;
-    lines_[row] = v;
+    lines_[row] = full ? v : filtered_[start + static_cast<int>(std::floor(static_cast<double>(row) / LINES * span))];
     hi = std::max(hi, static_cast<double>(std::abs(v)));
-    sum += static_cast<double>(v) * v;
+    sum += static_cast<double>(lines_[row]) * lines_[row];
   }
   // fast attack, slow release, hard floor: a quiet passage never lets the
   // gain run away, and deflection is clamped to what the controls describe
   peak_ = std::max({hi, peak_ * 0.995, PEAK_FLOOR});
   const double norm = gain / peak_;
   for (float& v : lines_) v = static_cast<float>(std::max(-2.0, std::min(2.0, v * norm)));
-  level = std::min(std::sqrt(sum / LINES) / peak_, 2.0);
+  detectedLevel = std::min(std::sqrt(sum / LINES) * gain / peak_, 2.0);
+  level = detectedLevel;
+  for (int i = 0; i < SCOPE_SAMPLES; i++) {
+    const int at = i * WINDOW / SCOPE_SAMPLES;
+    waveform[i] = static_cast<float>((std::isfinite(w[at]) ? w[at] : 0) * norm);
+    focusedWaveform[i] = static_cast<float>((full ? (std::isfinite(w[at]) ? w[at] : 0) : filtered_[at]) * norm);
+  }
   // the hit is the attack, not the level: positive low-band flux, normalized
   // against the biggest recent onset
-  const double low = lowEnergy(w, sampleRate);
+  const double originalLow = lowEnergy(w, sampleRate);
+  const double low = full ? originalLow : bandEnergy(band, sampleRate);
   const double flux = std::max(0.0, low - lowPrev_);
   hitRef_ = std::max({flux, hitRef_ * 0.995, HIT_FLOOR});
   hit = std::min(std::max(hit * HIT_RELEASE, flux / hitRef_), 1.5);
   lowPrev_ = low;
+  // The reference uses the entire input, so rejecting vocals/highs never
+  // auto-amplifies a tiny leak into another kick. Gate every route, including
+  // waveform effects and the engine's preset-owned sync jolt.
+  if (gain == 0) { hit = level = 0; gate_ = 0; }
+  else if (s.threshold == 0) gate_ = 1;
+  else gate_ = detectedLevel > s.threshold ? 1 : gate_ * HIT_RELEASE;
+  if (gate_ < 0.001) gate_ = 0;
+  hit *= gate_;
+  level *= gate_;
+  for (float& v : lines_) v = static_cast<float>(v * gate_);
 }
 
 // Mean magnitude below ~200 Hz (kick and bass), from a Blackman-windowed FFT
@@ -249,7 +307,34 @@ double Analyzer::lowEnergy(const float* w, double sampleRate) {
     re_[i] = (std::isfinite(w[i]) ? w[i] : 0.0f) * blackman_[i];
     im_[i] = 0;
   }
-  // in-place radix-2 FFT
+  transform(false);
+  for (int i = 0; i < N / 2; i++) {
+    const double mag = std::hypot(re_[i], im_[i]) / N;
+    smooth_[i] = 0.8 * smooth_[i] + 0.2 * mag;
+  }
+  for (int i = 0; i < SPECTRUM_BINS; i++) {
+    const double low = frequencyFromControl(static_cast<double>(i) / SPECTRUM_BINS);
+    const double high = frequencyFromControl(static_cast<double>(i + 1) / SPECTRUM_BINS);
+    if (low >= sampleRate / 2) { spectrum[i] = 0; continue; }
+    const int first = std::clamp(static_cast<int>(std::ceil(low * N / sampleRate)), 1, N / 2 - 1);
+    const int last = std::clamp(static_cast<int>(std::ceil(high * N / sampleRate)), first + 1, N / 2);
+    double mag = 0;
+    for (int bin = first; bin < last; bin++) mag = std::max(mag, smooth_[bin]);
+    spectrum[i] = static_cast<float>(std::clamp(mag > 0 ? (20 * std::log10(mag) + 60) / 60 : 0.0, 0.0, 1.0));
+  }
+  const double hz = sampleRate / N;
+  const int bins = std::max(1, std::min(N / 2, static_cast<int>(std::lround(200 / hz))));
+  double acc = 0;
+  for (int i = 0; i < bins; i++) {
+    const double db = smooth_[i] > 0 ? 20 * std::log10(smooth_[i]) : -1000;
+    acc += std::max(0.0, (db + 60) / 60);
+  }
+  return acc / bins;
+}
+
+void Analyzer::transform(bool inverse) {
+  const int N = WINDOW;
+  // in-place radix-2 FFT (also used to recover the selected band's waveform)
   for (int i = 1, j = 0; i < N; i++) {
     int bit = N >> 1;
     for (; j & bit; bit >>= 1) j ^= bit;
@@ -260,7 +345,7 @@ double Analyzer::lowEnergy(const float* w, double sampleRate) {
     }
   }
   for (int len = 2; len <= N; len <<= 1) {
-    const double ang = -2 * kPi / len;
+    const double ang = (inverse ? 2 : -2) * kPi / len;
     const double wr = std::cos(ang), wi = std::sin(ang);
     for (int i = 0; i < N; i += len) {
       double cr = 1, ci = 0;
@@ -277,16 +362,40 @@ double Analyzer::lowEnergy(const float* w, double sampleRate) {
       }
     }
   }
-  const double hz = sampleRate / 2 / (N / 2);
-  const int bins = std::max(1, std::min(N / 2, static_cast<int>(std::lround(200 / hz))));
-  double acc = 0;
-  for (int i = 0; i < bins; i++) {
-    const double mag = std::sqrt(re_[i] * re_[i] + im_[i] * im_[i]) / N;
-    smooth_[i] = 0.8 * smooth_[i] + 0.2 * mag;
-    const double db = smooth_[i] > 0 ? 20 * std::log10(smooth_[i]) : -1000;
-    acc += std::max(0.0, (db + 60) / 60);
+  if (inverse) for (double& v : re_) v /= N;
+}
+
+void Analyzer::filter(const float* w, double sr, Band b) {
+  for (int i = 0; i < WINDOW; i++) {
+    re_[i] = std::isfinite(w[i]) ? w[i] : 0;
+    im_[i] = 0;
   }
-  return acc / bins;
+  transform(false);
+  const double lowEdge = std::max(sr / WINDOW, b.low * 0.1);
+  const double highEdge = std::max(sr / WINDOW, b.high * 0.1);
+  for (int i = 0; i < WINDOW; i++) {
+    const double hz = std::min(i, WINDOW - i) * sr / WINDOW;
+    double weight = 0;
+    if (hz >= b.low && hz <= b.high) weight = 1;
+    else if (hz < b.low && hz > b.low - lowEdge) weight = 0.5 + 0.5 * std::cos(kPi * (b.low - hz) / lowEdge);
+    else if (hz > b.high && hz < b.high + highEdge) weight = 0.5 + 0.5 * std::cos(kPi * (hz - b.high) / highEdge);
+    if (i == 0) weight = 0;  // reject DC
+    re_[i] *= weight;
+    im_[i] *= weight;
+  }
+  transform(true);
+  for (int i = 0; i < WINDOW; i++) filtered_[i] = static_cast<float>(re_[i]);
+}
+
+double Analyzer::bandEnergy(Band b, double sr) const {
+  const int first = std::clamp(static_cast<int>(std::ceil(b.low * WINDOW / sr)), 1, WINDOW / 2 - 1);
+  const int last = std::clamp(static_cast<int>(std::ceil(b.high * WINDOW / sr)), first + 1, WINDOW / 2);
+  double sum = 0;
+  for (int i = first; i < last; i++) {
+    const double db = smooth_[i] > 0 ? 20 * std::log10(smooth_[i]) : -1000;
+    sum += std::max(0.0, (db + 60) / 60);
+  }
+  return sum / (last - first);
 }
 
 }  // namespace hzrdaudio

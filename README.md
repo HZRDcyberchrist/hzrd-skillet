@@ -8,7 +8,9 @@ This is a port of the whole signal path, not an approximation: all 26 GPU passes
 
 You need Resolume Arena or Avenue 7 or later on **Windows**, and a GPU with OpenGL 4.3 or newer (any discrete or integrated GPU from the last decade).
 
-Build the two plugin DLLs one of two ways.
+Download the ready-to-use Windows package from the [latest release](https://github.com/HZRDcyberchrist/hzrd-skillet/releases/latest). See the [release history](dist/CHANGELOG.md) for changes.
+
+To build from source, choose one of two ways.
 
 **GitHub Actions (no tools needed).** Put this folder in a GitHub repository and push. The `build` workflow compiles both DLLs on Windows and attaches them to the run as the artifact `HZRD-Skillet-windows-x64`.
 
@@ -89,6 +91,16 @@ Favorites are kept in `Documents\HZRD-Skillet-favorites.txt`, so every copy of t
 | Wave > color | The waveform swings the hue line by line |
 | Wave > picture | The waveform is mixed into the video signal as voltage |
 | Audio meter | Shows the input level, with KICK when a hit lands. If the input stops, it says why |
+| Audio scope | Opens an optional live viewer: input and focused waveforms, recent level history, and a frequency spectrum. All audio settings live together in the plugin's Audio group. The viewer does not appear in the video output |
+| Audio focus | Full mix (original response), Kick (35–150 Hz), Bass (30–250 Hz), Mids (250–2000 Hz), Highs (2000–16000 Hz), or Custom band. All audio routes use the selected sound; Kick routes follow its attacks and Level/Wave routes follow its level/waveform |
+| Reactive line | Minimum normalized level needed to react, 0–100%. Drag the amber line in the scope's level history or use this control. 0% stays open and keeps the original response; below the line, the reaction fades with a short release |
+| Band low / Band high | Edges of Custom band, 20–16000 Hz. Choose Custom band and set these controls in the Audio group. Reversed values are treated as the same band with ordered endpoints |
+
+**Quick setup:** in the Audio group, choose Audio input and set Audio focus to Kick or Bass. Raise Reactive line to ignore quieter sounds. Turn up Kick > roll or Kick > bloom for hits, or Level > tear / Wave > bend for a continuous bass response. Optionally press Audio scope to see the signal and drag the amber threshold line. The gray waveform is the input and the green waveform is the selected sound. The shaded spectrum region shows what you are listening to.
+
+Focus filters frequencies, so a low vocal or synth in the same range can still react. It does not separate instruments. The scope line compares the selected band's normalized RMS level after Audio gain; the scope history is before the gate, so you can see sounds that are being rejected. Audio gain at zero mutes every route. Dragging the line updates Reactive line in the Audio group. All tuning controls are MIDI-mappable and save with the composition. Full mix with the line at 0% is the default for existing compositions.
+
+The scope uses HZRD//Archive's black terminal styling, original website fonts, SHFTR camera icon, archive logo and a subdued sigil spanning the tuning area behind the text and graphs. Assets are embedded in both DLLs and work offline. It stays above other windows. Activating or restoring it also restores Resolume when minimized. **Confirm** keeps the current live settings and closes the viewer; the title-bar close button also hides it without stopping audio reaction.
 
 The two presets built for audio, **bass smack** and **sound at the rails**, respond as soon as an input is chosen, even with these knobs at 0. A strong kick also jolts the sync servo, as in the app.
 

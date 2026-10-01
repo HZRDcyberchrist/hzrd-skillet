@@ -78,7 +78,14 @@ enum : unsigned {
   PT_WAVE_COLOR,
   PT_WAVE_PICTURE,
   PT_AUDIO_METER,
-  // what the engine said when it started: "running on ..." or why not
+  // Keep every audio parameter consecutive: Resolume starts another foldout
+  // if a different group interrupts it. Names are composition identifiers.
+  PT_AUDIO_SCOPE,
+  PT_AUDIO_FOCUS,
+  PT_AUDIO_THRESHOLD,
+  PT_AUDIO_LOW,
+  PT_AUDIO_HIGH,
+  // The read-only engine status comes after the entire Audio group.
   PT_STATUS,
   PT_COUNT,
 };
@@ -89,13 +96,13 @@ static constexpr unsigned kMaxAudioEntries = 64;
 #if SKILLET_MIXER
 // The mixer: two inputs, so Resolume lists it with the blend modes and hands
 // it the layers below as well as the layer.
-static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKM", "HZRD//SkilletMix", 2, 1, 1, 0, FF_EFFECT,
+static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKM", "HZRD//SkilletMix", 2, 1, 1, 2, FF_EFFECT,
                                   "HZRD//Skillet as a mixer: the layers below come in as a second picture for "
                                   "Source A/B, the preset mixes and the Confessional ghost station.",
                                   "Port of videoskillet (c) Colin Diesh, MIT License");
 constexpr bool kMixer = true;
 #else
-static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKL", "HZRD//Skillet", 2, 1, 1, 0, FF_EFFECT,
+static CFFGLPluginInfo PluginInfo(PluginFactory<Skillet>, "VSKL", "HZRD//Skillet", 2, 1, 1, 2, FF_EFFECT,
                                   "Analog NTSC signal-path emulation: composite encode, tape, RF, sync, feedback and CRT, "
                                   "with the videoskillet preset catalogue.",
                                   "Port of videoskillet (c) Colin Diesh, MIT License");
@@ -400,8 +407,30 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   for (unsigned p = PT_AUDIO_IN; p <= PT_AUDIO_METER; p++) SetParamGroup(p, "Audio");
   syncAudioDevices(true);
 
+  SetParamInfo(PT_AUDIO_SCOPE, "Audio scope", FF_TYPE_EVENT, 0.0f);
+  const int focusCount = static_cast<int>(hzrdaudio::Focus::Count);
+  SetOptionParamInfo(PT_AUDIO_FOCUS, "Audio focus", focusCount, 0);
+  options(PT_AUDIO_FOCUS, focusCount);
+  for (int i = 0; i < focusCount; i++) SetParamElementInfo(PT_AUDIO_FOCUS, i, hzrdaudio::FOCUS_NAMES[i], static_cast<float>(i));
+  SetParamInfo(PT_AUDIO_THRESHOLD, "Reactive line", FF_TYPE_STANDARD, 0.0f);
+  values_[PT_AUDIO_LOW] = static_cast<float>(hzrdaudio::frequencyToControl(35));
+  values_[PT_AUDIO_HIGH] = static_cast<float>(hzrdaudio::frequencyToControl(250));
+  SetParamInfo(PT_AUDIO_LOW, "Band low", FF_TYPE_STANDARD, values_[PT_AUDIO_LOW]);
+  SetParamInfo(PT_AUDIO_HIGH, "Band high", FF_TYPE_STANDARD, values_[PT_AUDIO_HIGH]);
+  for (unsigned p = PT_AUDIO_SCOPE; p <= PT_AUDIO_HIGH; p++) SetParamGroup(p, "Audio");
   SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
   SetParamGroup(PT_STATUS, "Status");
+  audioScope_ = std::make_unique<hzrdaudio::Scope>([this](hzrdaudio::ScopeEdit edit, double value) {
+    unsigned p = PT_AUDIO_THRESHOLD;
+    switch (edit) {
+      case hzrdaudio::ScopeEdit::Focus: p = PT_AUDIO_FOCUS; break;
+      case hzrdaudio::ScopeEdit::Threshold: break;
+      case hzrdaudio::ScopeEdit::LowHz: p = PT_AUDIO_LOW; value = hzrdaudio::frequencyToControl(value); break;
+      case hzrdaudio::ScopeEdit::HighHz: p = PT_AUDIO_HIGH; value = hzrdaudio::frequencyToControl(value); break;
+    }
+    SetFloatParameter(p, static_cast<float>(value));
+    RaiseParamEvent(p, FF_EVENT_FLAG_VALUE);
+  });
   std::memcpy(frame_, values_, sizeof values_);
   syncFavorites(true);
 }
@@ -449,32 +478,50 @@ void Skillet::syncAudioDevices(bool force) {
 void Skillet::updateAudio() {
   std::string key;
   float gain;
+  hzrdaudio::ScopeFrame scope;
   {
     std::lock_guard<std::mutex> lock(stateMutex_);
     syncAudioDevices(false);
     key = audioKey_;
     gain = values_[PT_AUDIO_GAIN];
+    scope.settings.focus = static_cast<hzrdaudio::Focus>(indexOf(PT_AUDIO_FOCUS, static_cast<int>(hzrdaudio::Focus::Count)));
+    scope.settings.threshold = values_[PT_AUDIO_THRESHOLD];
+    scope.settings.lowHz = hzrdaudio::frequencyFromControl(values_[PT_AUDIO_LOW]);
+    scope.settings.highHz = hzrdaudio::frequencyFromControl(values_[PT_AUDIO_HIGH]);
+    scope.source = key.empty() ? "Choose an Audio input in Resolume" : audioName_;
   }
+  if (key != analyzedAudioKey_) { analyzer_.reset(); analyzedAudioKey_ = key; }
   listener_.select(key);
   double sr = 0;
   std::string meter;
   if (!key.empty() && listener_.latest(audioWindow_, sr)) {
-    analyzer_.update(audioWindow_, sr, gain * presetAudioGain_);
-    engine_->setAudio(analyzer_.lines(), analyzer_.hit, analyzer_.level);
     const std::string err = listener_.error();
     if (!err.empty()) {
+      analyzer_.reset();
+      engine_->setAudio(nullptr, 0, 0);
       meter = "No signal: " + err;
+      scope.source = meter;
     } else {
+      analyzer_.update(audioWindow_, sr, gain * presetAudioGain_, scope.settings);
+      engine_->setAudio(analyzer_.lines(), analyzer_.hit, analyzer_.level);
+      scope.connected = true;
+      scope.sampleRate = sr;
       // a text meter: level as a bar, and KICK while a hit is landing
       const int n = static_cast<int>(std::min(1.0, analyzer_.level / 1.5) * 16 + 0.5);
       meter = "[" + std::string(static_cast<size_t>(n), '#') + std::string(static_cast<size_t>(16 - n), '.') + "]";
-      if (analyzer_.hit > 0.6) meter += " KICK";
+      if (analyzer_.hit > 0.6) meter += scope.settings.focus == hzrdaudio::Focus::FullMix ? " KICK" : " HIT";
     }
   } else {
     analyzer_.reset();
     engine_->setAudio(nullptr, 0, 0);
     meter = "Off";
   }
+  scope.waveform = analyzer_.waveform;
+  scope.focusedWaveform = analyzer_.focusedWaveform;
+  scope.spectrum = analyzer_.spectrum;
+  scope.level = analyzer_.detectedLevel;
+  scope.hit = analyzer_.hit;
+  audioScope_->publish(scope);
   // the host reads the meter text on its own thread; a few updates a second
   // are plenty
   const double now = nowMs();
@@ -902,8 +949,15 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
       const int k = toIndex(value, static_cast<int>(audioKeys_.size()) + 1);
       audioKey_ = k == 0 ? std::string() : audioKeys_[static_cast<size_t>(k - 1)];
       values_[PT_AUDIO_IN] = static_cast<float>(k);
+      audioName_ = k == 0 ? std::string() : GetParamElementName(PT_AUDIO_IN, k);
       break;
     }
+    case PT_AUDIO_SCOPE:
+      if (pressed && audioScope_) audioScope_->show();
+      break;
+    case PT_AUDIO_FOCUS:
+      values_[index] = static_cast<float>(toIndex(value, static_cast<int>(hzrdaudio::Focus::Count)));
+      break;
     default:
       if (index >= PT_PAD0 && index < PT_PAD0 + 16 && pressed) {
         const int slot = static_cast<int>(index - PT_PAD0);
@@ -963,6 +1017,10 @@ char* Skillet::GetParameterDisplay(unsigned int index) {
     case PT_AMOUNT: std::snprintf(buf, sizeof buf, "%.0f%%", v * 100); break;
     case PT_COLOR: std::snprintf(buf, sizeof buf, "x%.2f", v); break;
     case PT_AUDIO_GAIN: std::snprintf(buf, sizeof buf, "x%.2f", v); break;
+    case PT_AUDIO_THRESHOLD: std::snprintf(buf, sizeof buf, "%.0f%%", v * 100); break;
+    case PT_AUDIO_LOW:
+    case PT_AUDIO_HIGH: std::snprintf(buf, sizeof buf, "%.0f Hz", hzrdaudio::frequencyFromControl(v)); break;
+    case PT_AUDIO_FOCUS: std::snprintf(buf, sizeof buf, "%s", hzrdaudio::FOCUS_NAMES[indexOf(index,static_cast<int>(hzrdaudio::Focus::Count))]); break;
     default:
       if (index >= PT_ASSIGN_V0 && index < PT_ASSIGN_V0 + 4) {
         const int t = indexOf(PT_ASSIGN_T0 + (index - PT_ASSIGN_V0), kNumControls + 1) - 1;

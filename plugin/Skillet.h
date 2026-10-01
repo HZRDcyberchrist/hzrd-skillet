@@ -16,6 +16,7 @@
 #include <FFGLSDK.h>
 
 #include "audio.h"
+#include "audio_scope.h"
 
 #include <chrono>
 #include <memory>
@@ -85,6 +86,7 @@ class Skillet : public CFFGLPlugin {
   void updateAudio();
   std::vector<std::string> audioKeys_;
   std::string audioKey_, audioName_;
+  std::string analyzedAudioKey_;
   unsigned audioDevVersion_ = 0;
   hzrdaudio::Listener listener_;
   hzrdaudio::Analyzer analyzer_;
@@ -96,4 +98,5 @@ class Skillet : public CFFGLPlugin {
   std::string meterShown_;
   std::vector<int> favs_;       // this instance's copy of the shared favorites
   unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
+  std::unique_ptr<hzrdaudio::Scope> audioScope_;
 };

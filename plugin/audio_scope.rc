@@ -1,0 +1,6 @@
+#include <windows.h>
+101 ICON "branding/shftr.ico"
+103 BITMAP "branding/archive.bmp"
+104 BITMAP "branding/sigil.bmp"
+105 RCDATA "branding/plex-mono-400.ttf"
+106 RCDATA "branding/vt323-400.ttf"

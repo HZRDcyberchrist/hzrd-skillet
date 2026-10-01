@@ -29,6 +29,10 @@ jobs:
             Select-String -Path build.log -Pattern ' error ' | Select-Object -First 15 | ForEach-Object { "::error::$($_.Line)" }
             exit 1
           }
+      - name: Audio analysis checks
+        run: |
+          cmake --build build --config Release --target skillet_audio_test skillet_scope_test
+          ctest --test-dir build -C Release --output-on-failure
       - name: Check the export Resolume looks for
         shell: pwsh
         run: |
@@ -45,8 +49,11 @@ jobs:
         run: |
           $v = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } elseif ('${{ github.event.inputs.release }}' -ne '') { 'v${{ github.event.inputs.release }}' } else { 'dev' }
           New-Item -ItemType Directory -Force pkg | Out-Null
-          Copy-Item build\Release\HZRD-Skillet.dll, build\Release\HZRD-Skillet-Mixer.dll, dist\INSTALL.txt, README.md, LICENSE, THIRD_PARTY_NOTICES.md pkg\
+          Copy-Item build\Release\HZRD-Skillet.dll, build\Release\HZRD-Skillet-Mixer.dll, dist\INSTALL.txt, dist\RELEASE_NOTES.md, dist\CHANGELOG.md, README.md, LICENSE, THIRD_PARTY_NOTICES.md pkg\
           Compress-Archive -Path pkg\* -DestinationPath "HZRD-Skillet-$v-windows.zip" -Force
+          $zip = "HZRD-Skillet-$v-windows.zip"
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
           "ZIP=HZRD-Skillet-$v-windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Publish the release (tags, or a manual run with a version)
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.release != ''
@@ -55,7 +62,9 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', github.event.inputs.release) }}
           target_commitish: ${{ github.sha }}
           name: HZRD//Skillet ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', github.event.inputs.release) }}
-          files: ${{ env.ZIP }}
+          files: |
+            ${{ env.ZIP }}
+            ${{ env.ZIP }}.sha256
           body_path: dist/RELEASE_NOTES.md
           make_latest: true
       - uses: actions/upload-artifact@v4
@@ -78,6 +87,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libegl-mesa0 libgl1-mesa-dri python3-pil glslang-tools
       - name: Build
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2
+      - name: Audio analysis checks
+        run: ctest --test-dir build --output-on-failure
       - name: Check every shader with the reference GLSL compiler
         run: |
           mkdir -p glsl

@@ -9,6 +9,7 @@
 // Elsewhere there is one synthetic "Test kick" input, for the test harness.
 #pragma once
 #include <atomic>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,6 +18,20 @@ namespace hzrdaudio {
 
 constexpr int LINES = 525;      // one sample per scan line
 constexpr int WINDOW = 2048;    // the analysis window (audiostate.ts ANALYSIS_FFT)
+
+enum class Focus { FullMix, Kick, Bass, Mids, Highs, Custom, Count };
+constexpr const char* FOCUS_NAMES[] = {"Full mix", "Kick (35-150 Hz)", "Bass (30-250 Hz)",
+                                      "Mids (250-2000 Hz)", "Highs (2000-16000 Hz)", "Custom band"};
+struct Settings {
+  Focus focus = Focus::FullMix;
+  double threshold = 0;  // 0..1, normalized RMS; zero keeps the original response
+  double lowHz = 35, highHz = 250;
+};
+struct Band { double low, high; };
+Band focusBand(const Settings& settings, double sampleRate);
+double frequencyFromControl(double value);
+double frequencyToControl(double hz);
+constexpr int SCOPE_SAMPLES = 512, SPECTRUM_BINS = 64;
 
 struct Device {
   std::string key;   // stable id: "default-out", "out:<endpoint>", "in:<endpoint>", "test"
@@ -58,13 +73,22 @@ class Analyzer {
  public:
   Analyzer();
   // gain: input trim. Fills lines(), level, hit.
-  void update(const float* window, double sampleRate, double gain);
+  void update(const float* window, double sampleRate, double gain, const Settings& settings = {});
   void reset();
   const float* lines() const { return lines_; }
   double level = 0, hit = 0;
+  double detectedLevel = 0;  // before the threshold gate, also used by the scope
+  std::array<float, SCOPE_SAMPLES> waveform{}, focusedWaveform{};
+  std::array<float, SPECTRUM_BINS> spectrum{};
 
  private:
   double lowEnergy(const float* window, double sampleRate);
+  void transform(bool inverse);
+  void filter(const float* window, double sampleRate, Band band);
+  double bandEnergy(Band band, double sampleRate) const;
+  float filtered_[WINDOW] = {};
+  Settings lastSettings_;
+  double lastSampleRate_ = 0, gate_ = 1;
   float lines_[LINES] = {};
   double peak_, lowPrev_ = 0, hitRef_;
   std::vector<double> smooth_;  // the analyser's smoothed magnitudes

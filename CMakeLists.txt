@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HZRDSkillet VERSION 1.0 LANGUAGES CXX)
+project(HZRDSkillet VERSION 1.2.4 LANGUAGES CXX)
 
 # HZRD//Skillet — the videoskillet signal path as a Resolume FFGL effect.
 #   Windows (Resolume): builds HZRD-Skillet.dll and HZRD-Skillet-Mixer.dll
@@ -7,6 +7,20 @@ project(HZRDSkillet VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+enable_testing()
+add_executable(skillet_audio_test test/audio_analysis.cpp plugin/audio.cpp plugin/audio_win.cpp)
+if(WIN32)
+  enable_language(RC)
+  target_link_libraries(skillet_audio_test PRIVATE ole32)
+  add_executable(skillet_scope_test test/audio_scope_win.cpp plugin/audio_scope.cpp plugin/audio.cpp plugin/audio_win.cpp plugin/audio_scope.rc)
+  target_include_directories(skillet_scope_test PRIVATE plugin)
+  target_compile_definitions(skillet_scope_test PRIVATE SKILLET_SCOPE_TEST)
+  target_link_libraries(skillet_scope_test PRIVATE user32 gdi32 msimg32 ole32)
+  add_test(NAME audio_scope COMMAND skillet_scope_test)
+else()
+  target_link_libraries(skillet_audio_test PRIVATE pthread)
+endif()
+add_test(NAME audio_analysis COMMAND skillet_audio_test)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -34,7 +48,7 @@ set_target_properties(skillet_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ── the FFGL plugins ──
 # Two DLLs from one source: the effect (one input) and the mixer (two inputs,
 # so Resolume hands it the layers below as well as the layer).
-set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/docs_folder.cpp plugin/audio.cpp plugin/audio_win.cpp)
+set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/docs_folder.cpp plugin/audio.cpp plugin/audio_win.cpp plugin/audio_scope.cpp)
 if(WIN32)
   foreach(variant IN ITEMS effect mixer)
     if(variant STREQUAL "mixer")
@@ -44,10 +58,12 @@ if(WIN32)
     endif()
     add_library(${tgt} SHARED
       ${PLUGIN_SOURCES}
+      plugin/audio_scope.rc
       ${FFGL_DIR}/source/lib/FFGLSDK.cpp
       ${FFGL_DIR}/build/windows/FFGLPlugins.def
     )
     target_include_directories(${tgt} PRIVATE
+      plugin
       ${FFGL_DIR}/source/lib
       ${FFGL_DIR}/source/lib/ffgl
       ${GLEW_DIR}/include
@@ -61,6 +77,7 @@ if(WIN32)
       skillet_engine
       ${GLEW_DIR}/lib/Release/x64/glew32s.lib
       opengl32
+      user32 gdi32 msimg32
     )
     set_target_properties(${tgt} PROPERTIES PREFIX "" OUTPUT_NAME "${tgt}")
   endforeach()
