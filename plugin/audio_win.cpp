@@ -8,9 +8,10 @@
 #include <windows.h>
 #include <mmreg.h>
 #include <initguid.h>
-#include <audioclient.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <propkeydef.h>
+#include <functiondiscoverykeys_devpkey.h>
 #pragma comment(lib, "ole32.lib")
 
 #include <algorithm>
