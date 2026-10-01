@@ -77,6 +77,21 @@ Favorites are kept in `Documents\HZRD-Skillet-favorites.txt`, so every copy of t
 
 **Other layers as a source.** Resolume doesn't let an effect read other layers. The mixer version gets the layers below this one (everything under it, combined), so put HZRD//SkilletMix on the top layer and choose **Layers below** for Source A or B.
 
+**Audio**: the picture reacts to sound, the way the app's audio input does.
+| Control | What it does |
+|---|---|
+| Audio input | **Computer audio (what's playing)** listens to whatever your computer is playing through its default output, Resolume's own sound included. Below it are every input (microphone, line in, audio interface, virtual cable) and every output device by name. Off by default |
+| Audio gain | Input trim, ×0 to ×4. The input is normalized automatically, so most sources need no adjustment |
+| Kick > roll | Kicks and bass hits knock the vertical hold, so the picture rolls on the beat |
+| Kick > bloom | Kicks sag the high voltage: the picture swells and blooms on each hit |
+| Level > tear | Loudness pulls the horizontal hold, so the picture tears and slants as it gets louder |
+| Wave > bend | The waveform itself bends the scan lines, one sample per line, like an oscilloscope drawn into the picture |
+| Wave > color | The waveform swings the hue line by line |
+| Wave > picture | The waveform is mixed into the video signal as voltage |
+| Audio meter | Shows the input level, with KICK when a hit lands. If the input stops, it says why |
+
+The two presets built for audio, **bass smack** and **sound at the rails**, respond as soon as an input is chosen, even with these knobs at 0. A strong kick also jolts the sync servo, as in the app.
+
 **Pads 1–16**: each pad has a preset dropdown and a button that fires it. They start on a spread of looks from across the catalogue.
 
 ## Playing presets from a MIDI controller
@@ -94,7 +109,7 @@ The plugin saves with your composition like any Resolume effect, so pad assignme
 ## Worth knowing
 
 - The simulation runs on a fixed 754 × 480 NTSC raster, like the real thing, and is scaled up to your output.
-- The app's audio-reactive controls (audio bend, roll, tear and so on) have no audio input in the plugin yet, so they do nothing. Resolume's own audio-reactive automation on any parameter works.
+- Audio is read straight from Windows, not from Resolume's audio routing, so effects on Resolume's audio don't reach it. Every copy of the plugin listening to the same input shares one capture.
 - App features that sit around the engine, like the LFO bay, scenes, recorder and saved looks, aren't part of this. Resolume's dashboard, LFOs and automation cover the same ground.
 
 ## How it was built, and how to update it

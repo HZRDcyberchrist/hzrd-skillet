@@ -62,6 +62,11 @@ class Engine {
   // layers below in the mixer, or a tracery generator).
   void render(const InputFrame& in, const InputFrame& inB, const OutputTarget& out, double nowMs);
 
+  // Audio for this frame: one sample per line (LINES of them, the waveform the
+  // deflection and video paths read) and the hit/level envelopes. Pass
+  // nullptr for silence.
+  void setAudio(const float* lines, double hit, double level);
+
   // The tracery generators (extras.h)
   Extras& extras() { return extras_; }
 
@@ -129,6 +134,9 @@ class Engine {
   uint32_t renderedFrames_ = 0;
   bool haveFace_ = false;
   Extras extras_;
+  std::vector<float> audio_;
+  double audioHit_ = 0, audioLevel_ = 0;
+  bool audioDirty_ = true, audioLive_ = false;
 };
 
 } // namespace skillet

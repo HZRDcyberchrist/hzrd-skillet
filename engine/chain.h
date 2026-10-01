@@ -18,6 +18,9 @@ struct FrameEnv {
   double srcMirror = 0, tubeTurn = 0;
   double srcNoise = 0, srcNoiseB = 0;
   bool bEnabled = false;  // whether a source B is patched in
+  // audio envelopes (audiostate.ts): `hit` punches on each kick, `level` rides
+  // the loudness. Zero when no audio input is chosen.
+  double audioHit = 0, audioLevel = 0;
 };
 
 // The pass gates the GPU side needs, decided once per frame from the board as

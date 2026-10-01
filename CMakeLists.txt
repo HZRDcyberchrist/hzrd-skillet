@@ -34,7 +34,7 @@ set_target_properties(skillet_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # ── the FFGL plugins ──
 # Two DLLs from one source: the effect (one input) and the mixer (two inputs,
 # so Resolume hands it the layers below as well as the layer).
-set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/docs_folder.cpp)
+set(PLUGIN_SOURCES plugin/Skillet.cpp plugin/docs_folder.cpp plugin/audio.cpp plugin/audio_win.cpp)
 if(WIN32)
   foreach(variant IN ITEMS effect mixer)
     if(variant STREQUAL "mixer")

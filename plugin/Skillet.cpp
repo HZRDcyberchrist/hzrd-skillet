@@ -68,11 +68,23 @@ enum : unsigned {
   // sixteen pads, each firing its own preset
   PT_PAD_PRESET0,
   PT_PAD0 = PT_PAD_PRESET0 + 16,
+  // audio in: a device (or what the computer is playing) pushing on the signal
+  PT_AUDIO_IN = PT_PAD0 + 16,
+  PT_AUDIO_GAIN,
+  PT_KICK_ROLL,
+  PT_KICK_BLOOM,
+  PT_LEVEL_TEAR,
+  PT_WAVE_BEND,
+  PT_WAVE_COLOR,
+  PT_WAVE_PICTURE,
+  PT_AUDIO_METER,
   // what the engine said when it started: "running on ..." or why not
-  PT_STATUS = PT_PAD0 + 16,
+  PT_STATUS,
   PT_COUNT,
 };
 static_assert(PT_COUNT <= 128, "values_ too small");
+// "Off", up to 62 devices, and room for one that has gone away
+static constexpr unsigned kMaxAudioEntries = 64;
 
 #if SKILLET_MIXER
 // The mixer: two inputs, so Resolume lists it with the blend modes and hands
@@ -373,10 +385,109 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
     SetParamGroup(PT_PAD0 + i, "Pads");
   }
 
+  // Audio
+  SetOptionParamInfo(PT_AUDIO_IN, "Audio input", kMaxAudioEntries, 0);
+  SetParamInfo(PT_AUDIO_GAIN, "Audio gain", FF_TYPE_STANDARD, 1.0f);
+  setRange(PT_AUDIO_GAIN, 0.0f, 4.0f);
+  values_[PT_AUDIO_GAIN] = 1.0f;
+  SetParamInfo(PT_KICK_ROLL, "Kick > roll", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_KICK_BLOOM, "Kick > bloom", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_LEVEL_TEAR, "Level > tear", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_WAVE_BEND, "Wave > bend", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_WAVE_COLOR, "Wave > color", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_WAVE_PICTURE, "Wave > picture", FF_TYPE_STANDARD, 0.0f);
+  SetParamInfo(PT_AUDIO_METER, "Audio meter", FF_TYPE_TEXT, meter_.c_str());
+  for (unsigned p = PT_AUDIO_IN; p <= PT_AUDIO_METER; p++) SetParamGroup(p, "Audio");
+  syncAudioDevices(true);
+
   SetParamInfo(PT_STATUS, "Status", FF_TYPE_TEXT, status_.c_str());
   SetParamGroup(PT_STATUS, "Status");
   std::memcpy(frame_, values_, sizeof values_);
   syncFavorites(true);
+}
+
+// Rebuilds the Audio input dropdown when the machine's devices change, keeping
+// the chosen one chosen (by its id, not its place in the list). A chosen
+// device that has gone away stays listed as "not connected" so its choice
+// survives until it's back. Render thread (and the constructor) only, with
+// stateMutex_ held.
+void Skillet::syncAudioDevices(bool force) {
+  unsigned v = 0;
+  std::vector<hzrdaudio::Device> list = force ? hzrdaudio::devicesNow(v) : hzrdaudio::devices(v);
+  if (!force && v == audioDevVersion_) return;
+  audioDevVersion_ = v;
+  if (list.size() > kMaxAudioEntries - 2) list.resize(kMaxAudioEntries - 2);
+  std::vector<std::string> names{"Off"};
+  std::vector<float> vals{0.0f};
+  audioKeys_.clear();
+  int chosen = 0;
+  for (const auto& d : list) {
+    audioKeys_.push_back(d.key);
+    names.push_back(d.name);
+    vals.push_back(static_cast<float>(audioKeys_.size()));
+    if (d.key == audioKey_) {
+      chosen = static_cast<int>(audioKeys_.size());
+      audioName_ = d.name;
+    }
+  }
+  if (!audioKey_.empty() && chosen == 0) {
+    audioKeys_.push_back(audioKey_);
+    names.push_back(audioName_ + " (not connected)");
+    vals.push_back(static_cast<float>(audioKeys_.size()));
+    chosen = static_cast<int>(audioKeys_.size());
+  }
+  SetParamElements(PT_AUDIO_IN, names, vals, !force);
+  hi_[PT_AUDIO_IN] = static_cast<float>(audioKeys_.size());
+  if (!force && values_[PT_AUDIO_IN] != chosen) {
+    values_[PT_AUDIO_IN] = static_cast<float>(chosen);
+    RaiseParamEvent(PT_AUDIO_IN, FF_EVENT_FLAG_VALUE);
+  }
+}
+
+// One frame of audio: pull the newest window from the chosen input, analyze
+// it, and hand the engine its waveform and envelopes. Render thread only.
+void Skillet::updateAudio() {
+  std::string key;
+  float gain;
+  {
+    std::lock_guard<std::mutex> lock(stateMutex_);
+    syncAudioDevices(false);
+    key = audioKey_;
+    gain = values_[PT_AUDIO_GAIN];
+  }
+  listener_.select(key);
+  double sr = 0;
+  std::string meter;
+  if (!key.empty() && listener_.latest(audioWindow_, sr)) {
+    analyzer_.update(audioWindow_, sr, gain * presetAudioGain_);
+    engine_->setAudio(analyzer_.lines(), analyzer_.hit, analyzer_.level);
+    const std::string err = listener_.error();
+    if (!err.empty()) {
+      meter = "No signal: " + err;
+    } else {
+      // a text meter: level as a bar, and KICK while a hit is landing
+      const int n = static_cast<int>(std::min(1.0, analyzer_.level / 1.5) * 16 + 0.5);
+      meter = "[" + std::string(static_cast<size_t>(n), '#') + std::string(static_cast<size_t>(16 - n), '.') + "]";
+      if (analyzer_.hit > 0.6) meter += " KICK";
+    }
+  } else {
+    analyzer_.reset();
+    engine_->setAudio(nullptr, 0, 0);
+    meter = "Off";
+  }
+  // the host reads the meter text on its own thread; a few updates a second
+  // are plenty
+  const double now = nowMs();
+  if (now - meterAt_ >= 125) {
+    meterAt_ = now;
+    bool changed;
+    {
+      std::lock_guard<std::mutex> lock(meterMutex_);
+      changed = meter != meter_;
+      if (changed) meter_ = meter;
+    }
+    if (changed) RaiseParamEvent(PT_AUDIO_METER, FF_EVENT_FLAG_VALUE);
+  }
 }
 
 // Rebuilds the Favorites dropdown when the shared list has changed (here or
@@ -575,6 +686,25 @@ void Skillet::applyOverlay(void* p) const {
   if (cam > 0) c[C_fbMix] = std::max(c[C_fbMix], cam * 0.9);
   const double time = frame_[PT_TIME];
   if (time < 1) c[C_timeScale] = c[C_timeScale] * time;
+  // audio: each knob opens one of the app's own audio routes, never closing
+  // one a preset already has open
+  auto atLeast = [&c](int k, double v) { c[k] = spanClamp(k, std::max(c[k], v)); };
+  const double kroll = frame_[PT_KICK_ROLL];
+  if (kroll > 0) atLeast(C_audioRoll, kroll * 12);
+  const double bloom = frame_[PT_KICK_BLOOM];
+  if (bloom > 0) {
+    atLeast(C_audioSagUs, bloom * 80);
+    atLeast(C_audioLoad, bloom * 5);
+  }
+  const double tear = frame_[PT_LEVEL_TEAR];
+  if (tear > 0 && std::abs(c[C_audioTear]) < tear * 1500) c[C_audioTear] = spanClamp(C_audioTear, tear * 1500);
+  const double wbend = frame_[PT_WAVE_BEND];
+  if (wbend > 0 && std::abs(c[C_audioBendUs]) < wbend * 30) c[C_audioBendUs] = spanClamp(C_audioBendUs, wbend * 30);
+  const double wcol = frame_[PT_WAVE_COLOR];
+  if (wcol > 0 && std::abs(c[C_audioHueDeg]) < wcol * 90) c[C_audioHueDeg] = spanClamp(C_audioHueDeg, wcol * 90);
+  const double wpic = frame_[PT_WAVE_PICTURE];
+  if (wpic > 0) atLeast(C_audioIre, wpic * 60);
+  presetAudioGain_ = c[C_audioGain];
   for (int i = 0; i < 4; i++) {
     const int t = toIndex(frame_[PT_ASSIGN_T0 + i], kNumControls + 1) - 1;
     if (t < 0) continue;
@@ -694,6 +824,7 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   std::memcpy(frame_, values_, sizeof values_);
   state.unlock();
 
+  updateAudio();
   SignalChain& ch = engine_->chain();
   ch.overlay = [this](Controls& c) { applyOverlay(&c); };
   engine_->render(inA, inB, out, now);
@@ -767,6 +898,12 @@ FFResult Skillet::SetFloatParameter(unsigned int index, float value) {
     case PT_RESET:
       if (pressed) pendingReset_ = true;
       break;
+    case PT_AUDIO_IN: {
+      const int k = toIndex(value, static_cast<int>(audioKeys_.size()) + 1);
+      audioKey_ = k == 0 ? std::string() : audioKeys_[static_cast<size_t>(k - 1)];
+      values_[PT_AUDIO_IN] = static_cast<float>(k);
+      break;
+    }
     default:
       if (index >= PT_PAD0 && index < PT_PAD0 + 16 && pressed) {
         const int slot = static_cast<int>(index - PT_PAD0);
@@ -789,7 +926,7 @@ float Skillet::GetFloatParameter(unsigned int index) {
 }
 
 FFResult Skillet::SetTextParameter(unsigned int index, const char* value) {
-  if (index == PT_STATUS) return FF_SUCCESS;  // read-only: the plugin owns it
+  if (index == PT_STATUS || index == PT_AUDIO_METER) return FF_SUCCESS;  // read-only: the plugin owns it
   if (index != PT_CAPTION || value == nullptr) return FF_FAIL;
   std::lock_guard<std::mutex> lock(captionMutex_);
   caption_ = value;
@@ -799,6 +936,11 @@ FFResult Skillet::SetTextParameter(unsigned int index, const char* value) {
 
 char* Skillet::GetTextParameter(unsigned int index) {
   if (index == PT_STATUS) return const_cast<char*>(status_.c_str());
+  if (index == PT_AUDIO_METER) {
+    std::lock_guard<std::mutex> lock(meterMutex_);
+    meterShown_ = meter_;
+    return const_cast<char*>(meterShown_.c_str());
+  }
   if (index != PT_CAPTION) return nullptr;
   std::lock_guard<std::mutex> lock(captionMutex_);
   captionShown_ = caption_;
@@ -820,6 +962,7 @@ char* Skillet::GetParameterDisplay(unsigned int index) {
     case PT_TINT: std::snprintf(buf, sizeof buf, "%+.0f deg", v); break;
     case PT_AMOUNT: std::snprintf(buf, sizeof buf, "%.0f%%", v * 100); break;
     case PT_COLOR: std::snprintf(buf, sizeof buf, "x%.2f", v); break;
+    case PT_AUDIO_GAIN: std::snprintf(buf, sizeof buf, "x%.2f", v); break;
     default:
       if (index >= PT_ASSIGN_V0 && index < PT_ASSIGN_V0 + 4) {
         const int t = indexOf(PT_ASSIGN_T0 + (index - PT_ASSIGN_V0), kNumControls + 1) - 1;

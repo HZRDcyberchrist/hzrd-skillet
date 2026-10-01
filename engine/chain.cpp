@@ -132,10 +132,11 @@ void SignalChain::renderFrameCpu(const FrameEnv& env, const Controls& c) {
   }
   const MixUniforms mixU = mixState_.update(c[C_aPause], c[C_bLineHz], c[C_bDetuneHz], c[C_bRollLps], c[C_bPause],
                                             c[C_wipePos], c[C_wipeRate]);
-  // kickServo (the audio half has no input in the plugin)
+  // kickServo: the transport changing speed, and a bass hit through the cabinet
   const double dShuttle = std::abs(c[C_shuttleX] - lastShuttleX_);
   lastShuttleX_ = c[C_shuttleX];
   if (dShuttle > 0) servo_.kick(jmin(dShuttle, 1));
+  if (env.audioHit > 0.9) servo_.kick(env.audioHit * 0.5);
   track_ = servo_.update(c[C_trackPos], c[C_trackAmt], c[C_trackHunt], c[C_trackKick]);
 
   UniformEnv ue{};
@@ -151,8 +152,8 @@ void SignalChain::renderFrameCpu(const FrameEnv& env, const Controls& c) {
   ue.beamBlank = strobeGate_.step(c[C_strobeHz], c[C_strobeMs], env.nowMs);
   ue.scPhase = scPhase_;
   ue.cfbCarrierPhase = cfbCarrierPhase_;
-  ue.audioHit = 0;
-  ue.audioLevel = 0;
+  ue.audioHit = env.audioHit;
+  ue.audioLevel = env.audioLevel;
   ue.impulseTrainPos = impulseTrainPos_;
   ue.impulseTrainStep = impulseTrainStep_;
   ue.shuttlePhase = shuttlePhase_;

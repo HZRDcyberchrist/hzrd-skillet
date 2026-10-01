@@ -636,6 +636,14 @@ void Engine::runSimulation(const InputFrame& in) {
   BufferSubData(SHADER_STORAGE_BUFFER, 0, sizeof ch.lineParams[0], ch.lineParams[0]);
   BindBuffer(SHADER_STORAGE_BUFFER, 0);
   stageSourceB(in);
+  // the waveform at line rate, uploaded whenever it changed (and once as zeros,
+  // so audio going away never leaves a frozen bend behind)
+  if (audioDirty_ && audio_.size() == static_cast<size_t>(LINES)) {
+    BindBuffer(SHADER_STORAGE_BUFFER, audioBuf_);
+    BufferSubData(SHADER_STORAGE_BUFFER, 0, LINES * 4, audio_.data());
+    BindBuffer(SHADER_STORAGE_BUFFER, 0);
+    audioDirty_ = false;
+  }
 
   // prePasses
   dispatch(P("compose.main", {R_PARAMS, T_SRCA, T_FACE, S_LINEAR, T_INPUT, R_TIMING}, perTile));
@@ -713,6 +721,21 @@ void Engine::present(const OutputTarget& out, unsigned tex) {
   BindVertexArray(0);
 }
 
+void Engine::setAudio(const float* lines, double hit, double level) {
+  if (audio_.size() != static_cast<size_t>(LINES)) audio_.assign(LINES, 0.0f);
+  if (lines) {
+    std::memcpy(audio_.data(), lines, LINES * sizeof(float));
+    audioDirty_ = true;
+    audioLive_ = true;
+  } else if (audioLive_) {
+    std::fill(audio_.begin(), audio_.end(), 0.0f);
+    audioDirty_ = true;
+    audioLive_ = false;
+  }
+  audioHit_ = lines ? hit : 0;
+  audioLevel_ = lines ? level : 0;
+}
+
 void Engine::render(const InputFrame& in, const InputFrame& inB, const OutputTarget& out, double nowMs) {
   if (!ok_) return;
   if (srcNoiseA_ == 0) stageInput(in);
@@ -727,6 +750,8 @@ void Engine::render(const InputFrame& in, const InputFrame& inB, const OutputTar
   const int b = static_cast<int>(sourceB_);
   env.srcNoiseB = b >= 1 && b <= 3 ? b : 0;
   env.bEnabled = sourceB_ != SourceB::Off;
+  env.audioHit = audioHit_;
+  env.audioLevel = audioLevel_;
   const bool stepped = chain_->step(env);
   if (stepped) {
     runSimulation(inB);

@@ -27,6 +27,12 @@ USE IT
     random then play only your starred looks. Favorites are kept in
     Documents\HZRD-Skillet-favorites.txt.
 
+AUDIO
+  In the Audio group, set Audio input to "Computer audio (what's playing)"
+  to react to whatever your computer plays, or choose a microphone, line in
+  or audio interface. Then turn up Kick > roll, Kick > bloom, Level > tear
+  or the Wave knobs. The Audio meter shows that sound is arriving.
+
 MIDI
   Shortcuts > Edit MIDI, click any control, then move the pad, knob or fader
   on your controller. Good first mappings: Pad 1-16 to your pads, Prev / Next

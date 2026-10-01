@@ -125,6 +125,15 @@ int main(int argc, char** argv) {
     } else if (cmd == "status") {
       int p = findParam("Status"); const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
       printf("status: %s\n", t ? t : "");
+    } else if (cmd.rfind("meter:", 0) == 0) {
+      // frames in real time, printing the Audio meter text as they go
+      int k = atoi(cmd.c_str() + 6), p = findParam("Audio meter");
+      for (int j = 0; j < k; j++) {
+        BindFramebuffer(FRAMEBUFFER, fbo); Viewport(0, 0, W, H); call(FF_PROCESS_OPENGL, ptr(&pgl), id);
+        const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
+        printf("meter %3d: %s\n", j, t ? t : "");
+        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+      }
     } else if (cmd.rfind("sleep:", 0) == 0) {
       std::this_thread::sleep_for(std::chrono::milliseconds(atoi(cmd.c_str() + 6)));
     } else if (cmd == "events") {

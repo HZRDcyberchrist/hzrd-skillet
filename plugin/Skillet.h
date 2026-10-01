@@ -15,6 +15,8 @@
 #pragma once
 #include <FFGLSDK.h>
 
+#include "audio.h"
+
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -77,6 +79,21 @@ class Skillet : public CFFGLPlugin {
   unsigned nextRandom();
   void setRange(unsigned p, float lo, float hi);
   int indexOf(unsigned p, int n) const;
+  // audio in: the dropdown's keys (entry i+1), the one chosen, and what the
+  // render thread does with it
+  void syncAudioDevices(bool force);
+  void updateAudio();
+  std::vector<std::string> audioKeys_;
+  std::string audioKey_, audioName_;
+  unsigned audioDevVersion_ = 0;
+  hzrdaudio::Listener listener_;
+  hzrdaudio::Analyzer analyzer_;
+  float audioWindow_[hzrdaudio::WINDOW] = {};
+  mutable double presetAudioGain_ = 1;  // the preset's own input trim, from the last frame
+  double meterAt_ = -1e9;
+  std::string meter_ = "Off";
+  std::mutex meterMutex_;
+  std::string meterShown_;
   std::vector<int> favs_;       // this instance's copy of the shared favorites
   unsigned favsVersion_ = 0;    // which revision of the shared list favs_ is
 };
