@@ -6,6 +6,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <mmreg.h>
 #include <initguid.h>
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>

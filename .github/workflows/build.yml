@@ -22,7 +22,13 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
-        run: cmake --build build --config Release --target HZRD-Skillet HZRD-Skillet-Mixer
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target HZRD-Skillet HZRD-Skillet-Mixer 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path build.log -Pattern ' error ' | Select-Object -First 15 | ForEach-Object { "::error::$($_.Line)" }
+            exit 1
+          }
       - name: Check the export Resolume looks for
         shell: pwsh
         run: |
