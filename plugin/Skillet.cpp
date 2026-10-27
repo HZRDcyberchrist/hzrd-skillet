@@ -87,6 +87,8 @@ enum : unsigned {
   PT_AUDIO_HIGH,
   // The read-only engine status comes after the entire Audio group.
   PT_STATUS,
+  // 1.2.5, appended so every earlier control keeps its position
+  PT_KEEP_ALPHA,  // pass the layer's transparency through
   PT_COUNT,
 };
 static_assert(PT_COUNT <= 128, "values_ too small");
@@ -372,6 +374,8 @@ Skillet::Skillet() : CFFGLPlugin(false), t0_(std::chrono::steady_clock::now()) {
   SetParamInfo(PT_FILL, "Fill frame", FF_TYPE_BOOLEAN, 0.0f);
   SetParamInfo(PT_RESET, "Reset signal", FF_TYPE_EVENT, 0.0f);
   SetParamInfo(PT_CAPTION, "Caption", FF_TYPE_TEXT, caption_.c_str());
+  SetParamInfo(PT_KEEP_ALPHA, "Keep alpha", FF_TYPE_BOOLEAN, 0.0f);
+  SetParamGroup(PT_KEEP_ALPHA, "Output");
   for (unsigned p : {PT_SOURCE_A, PT_SOURCE_B, PT_MIRROR, PT_FILL, PT_RESET, PT_CAPTION}) SetParamGroup(p, "Sources");
 #if SKILLET_MIXER
   SetParamInfo(PT_SWAP, "Swap inputs", FF_TYPE_BOOLEAN, 0.0f);
@@ -858,6 +862,7 @@ FFResult Skillet::ProcessOpenGL(ProcessOpenGLStruct* pGL) {
   }
   engine_->setSourceB(b);
   engine_->setMirror(values_[PT_MIRROR] > 0.5f);
+  engine_->setKeepAlpha(values_[PT_KEEP_ALPHA] > 0.5f);
 
   OutputTarget out;
   out.fbo = pGL->HostFBO;

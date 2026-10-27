@@ -51,6 +51,9 @@ class Engine {
   void setSourceA(int kind) { srcNoiseA_ = kind; }
   void setSourceB(SourceB kind);
   void setMirror(bool on) { mirror_ = on; }
+  // Keep Alpha (1.2.5): the layer's transparency follows the picture through
+  // the tube's geometry to the output, instead of every pixel being opaque.
+  void setKeepAlpha(bool on) { keepAlpha_ = on; }
   void setCaption(const std::string& text);
 
   // Runs one host frame: stages the input, advances the simulation (unless
@@ -94,6 +97,7 @@ class Engine {
   void dispatch(const Pass& p);
   void runSimulation(const InputFrame& in);
   void present(const OutputTarget& out, unsigned tex);
+  void presentAlpha(const OutputTarget& out);
   void clearTexture(unsigned tex);
   unsigned bufOf(int r) const;
   unsigned makeBuffer(gl::GLenum target, long size);
@@ -130,6 +134,8 @@ class Engine {
   SourceB sourceB_ = SourceB::Off;
   bool barsLoaded_ = false;
   bool mirror_ = false;
+  bool keepAlpha_ = false;
+  unsigned alphaProg_ = 0;
   double srcAspect_ = 4.0 / 3.0;
   uint32_t renderedFrames_ = 0;
   bool haveFace_ = false;

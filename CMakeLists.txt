@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HZRDSkillet VERSION 1.2.4 LANGUAGES CXX)
+project(HZRDSkillet VERSION 1.2.5 LANGUAGES CXX)
 
 # HZRD//Skillet — the videoskillet signal path as a Resolume FFGL effect.
 #   Windows (Resolume): builds HZRD-Skillet.dll and HZRD-Skillet-Mixer.dll

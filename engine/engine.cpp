@@ -161,6 +161,43 @@ unsigned Engine::compile(const char* name, GLenum stage, const char* src) {
   return s;
 }
 
+// Keep Alpha pass (fragment main). Mirrors present.fs's geometry (tube turn,
+// zoom, glass curvature, glass edge) and compose's source fit (aspect crop,
+// turn, mirror), then reads the staged source's alpha. Signal-domain motion
+// (rolling, tearing, wobble) moves the colour but not this mask.
+static const char* const kAlphaMain = R"GLSL(void main() {
+  VOut in_v = VOut(gl_FragCoord, v_loc0);
+  bool turned = (P.tubeTurn > 0.5);
+  vec2 cs = turned ? vec2(P.canvasH, P.canvasW) : vec2(P.canvasW, P.canvasH);
+  vec2 px = (turned ? vec2(in_v.uv.y, 1.0 - in_v.uv.x) : in_v.uv) * cs;
+  float scale = min(cs.x / 4.0, cs.y / 3.0);
+  vec2 half_v = vec2(2.0 * scale, 1.5 * scale);
+  vec2 rel = (px - cs * 0.5) / half_v;
+  float zoom = max(P.crtZoom, 0.05);
+  float halfView = 0.5 / zoom;
+  vec2 lens = (zoom > 1.0) ? clamp(vec2(P.crtZoomX, P.crtZoomY), vec2(halfView), vec2(1.0 - halfView)) : vec2(0.5);
+  vec2 flat_v = ((rel * 0.5 + vec2(0.5)) - lens) / zoom + lens;
+  vec2 sp = (flat_v - vec2(0.5)) * vec2(4.0, 3.0);
+  float back = clamp(1.0 - zoom, 0.0, 1.0);
+  vec2 n = sp / GLASS;
+  float r2 = dot(n, n);
+  vec2 s = sp * (1.0 + (0.11 * back * r2) / (1.0 + 0.5 * r2));
+  vec2 tuv = s / vec2(4.0, 3.0) + vec2(0.5);
+  float glassDist = roundBox(s, GLASS, 0.18 * back);
+  if (glassDist > 0.0) { o_loc0 = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  float disp = 4.0 / 3.0;
+  float aspect = turned ? 1.0 / P.srcAspect : P.srcAspect;
+  vec2 suv = tuv;
+  if (aspect > disp) suv.x = 0.5 + (tuv.x - 0.5) * (disp / aspect);
+  else suv.y = 0.5 + (tuv.y - 0.5) * (aspect / disp);
+  vec2 r = turned ? vec2(1.0 - suv.y, suv.x) : suv;
+  vec2 q = vec2((P.srcMirror > 0.5) ? 1.0 - r.x : r.x, r.y);
+  float a = textureLod(screenTex, q, 0.0).a;
+  float feather = (back > 0.0) ? smoothstep(0.0, -0.008, glassDist) : 1.0;
+  o_loc0 = vec4(0.0, 0.0, 0.0, mix(1.0, a, feather));
+}
+)GLSL";
+
 bool Engine::buildPrograms() {
   // Compile everything and report every failure at once: a driver that
   // rejects one shader often rejects a few, and each round trip to find the
@@ -212,6 +249,33 @@ bool Engine::buildPrograms() {
       DeleteProgram(p);
     } else {
       programs_[fs].id = p;
+    }
+  }
+  // Keep Alpha: present.fs's own declarations (Params, GLASS, roundBox) with
+  // a main that runs the same screen -> tube -> raster -> source mapping and
+  // writes only the source alpha.
+  if (sv) {
+    std::string src = kPrograms[fs].src;
+    size_t at = src.rfind("void main()");
+    if (at != std::string::npos) {
+      src = src.substr(0, at) + kAlphaMain;
+      GLuint sa = compile("present_alpha.fs", FRAGMENT_SHADER, src.c_str());
+      if (sa) {
+        GLuint p = CreateProgram();
+        AttachShader(p, sv);
+        AttachShader(p, sa);
+        LinkProgram(p);
+        GLint okl = 0;
+        GetProgramiv(p, LINK_STATUS, &okl);
+        if (okl) alphaProg_ = p;
+        else {
+          char log[4096] = {};
+          GetProgramInfoLog(p, sizeof log, nullptr, log);
+          errors += std::string("link present_alpha: ") + log + "\n";
+          DeleteProgram(p);
+        }
+        DeleteShader(sa);
+      } else errors += error_ + "\n";
     }
   }
   if (sv) DeleteShader(sv);
@@ -358,6 +422,8 @@ void Engine::destroyResources() {
   if (programs_)
     for (int i = 0; i < kNumPrograms; i++)
       if (programs_[i].id) DeleteProgram(programs_[i].id);
+  if (alphaProg_) DeleteProgram(alphaProg_);
+  alphaProg_ = 0;
   extras_.destroy();
   resources_ = false;
 }
@@ -721,6 +787,23 @@ void Engine::present(const OutputTarget& out, unsigned tex) {
   BindVertexArray(0);
 }
 
+// Writes only the alpha channel over what present() drew.
+void Engine::presentAlpha(const OutputTarget& out) {
+  if (!alphaProg_ || texA_ == 0) return;
+  UseProgram(alphaProg_);
+  BindBufferBase(UNIFORM_BUFFER, 0, paramsUbo_);
+  ActiveTexture(TEXTURE0);
+  BindTexture(TEXTURE_2D, texA_);
+  BindSampler(0, sampler_);
+  BindFramebuffer(FRAMEBUFFER, out.fbo);
+  Viewport(out.x, out.y, out.width, out.height);
+  ColorMaski(0, GLboolean(0), GLboolean(0), GLboolean(0), GLboolean(1));
+  BindVertexArray(vao_);
+  DrawArrays(TRIANGLES, 0, 3);
+  BindVertexArray(0);
+  ColorMaski(0, GLboolean(1), GLboolean(1), GLboolean(1), GLboolean(1));
+}
+
 void Engine::setAudio(const float* lines, double hit, double level) {
   if (audio_.size() != static_cast<size_t>(LINES)) audio_.assign(LINES, 0.0f);
   if (lines) {
@@ -768,6 +851,8 @@ void Engine::render(const InputFrame& in, const InputFrame& inB, const OutputTar
     BindBuffer(UNIFORM_BUFFER, 0);
   }
   present(out, faceTex_);
+  // Keep Alpha: only when Source A is a picture (the layer), not a generator.
+  if (keepAlpha_ && srcNoiseA_ == 0) presentAlpha(out);
 
   // hand the context back in its default state (FFGL's rule), apart from the
   // caller's framebuffer, which stays bound

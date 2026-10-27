@@ -122,6 +122,31 @@ int main(int argc, char** argv) {
       for (int j = 0; j < 120; j++) { BindFramebuffer(FRAMEBUFFER, fbo); Viewport(0, 0, W, H); call(FF_PROCESS_OPENGL, ptr(&pgl), id);
         GetParamEventsStruct q{0, nullptr}; call(FF_GET_PARAMETER_EVENTS, ptr(&q), id); std::vector<ParamEventStruct> ev(q.numEvents + 64); GetParamEventsStruct g{q.numEvents, ev.data()}; call(FF_GET_PARAMETER_EVENTS, ptr(&g), id); }
       ui.join(); printf("ui storm of %d actions survived\n", n);
+    } else if (cmd == "holecard") {
+      // the layer as HZRD//PANEL's Reveal Layer Below leaves it: an elliptical
+      // hole (colour 0, alpha 0) in the middle of the picture
+      std::vector<uint8_t> h = px;
+      for (int y = 0; y < 720; y++) for (int x = 0; x < 1280; x++) {
+        float dx = (x + .5f - 640) / 300.f, dy = (y + .5f - 360) / 200.f;
+        if (dx * dx + dy * dy < 1) std::memset(&h[(y * 1280 + x) * 4], 0, 4);
+      }
+      BindTexture(TEXTURE_2D, inTex); TexSubImage2D(TEXTURE_2D, 0, 0, 0, 1280, 720, RGBA, UNSIGNED_BYTE, h.data()); BindTexture(TEXTURE_2D, 0);
+      puts("input: hole card");
+    } else if (cmd.rfind("alpha:", 0) == 0) {
+      // alpha statistics: inside the hole's middle, the picture around it, and the far left edge
+      std::vector<uint8_t> o(W * H * 4); BindFramebuffer(FRAMEBUFFER, fbo); PixelStorei(PACK_ALIGNMENT, 1); ReadPixels(0, 0, W, H, RGBA, UNSIGNED_BYTE, o.data());
+      long in = 0, inClear = 0, ring = 0, ringOpaque = 0, edge = 0, edgeOpaque = 0;
+      for (int y = 0; y < H; y += 2) for (int x = 0; x < W; x += 2) {
+        int a = o[(y * W + x) * 4 + 3];
+        float dx = (x + .5f - 640) / 300.f, dy = (y + .5f - 360) / 200.f, r = dx * dx + dy * dy;
+        if (r < .5f) { in++; if (a < 20) inClear++; }
+        else if (r > 1.6f && r < 2.2f && std::abs(x - 640) < 400) { ring++; if (a > 235) ringOpaque++; }
+        if (x < 40) { edge++; if (a > 235) edgeOpaque++; }
+      }
+      FILE* w = fopen(cmd.c_str() + 6, "wb"); fprintf(w, "P5\n%d %d\n255\n", W, H);
+      for (int y = H - 1; y >= 0; y--) for (int x = 0; x < W; x++) fputc(o[(y * W + x) * 4 + 3], w);
+      fclose(w);
+      printf("alpha: hole middle %ld/%ld clear, picture around it %ld/%ld opaque, left edge %ld/%ld opaque\n", inClear, in, ringOpaque, ring, edgeOpaque, edge);
     } else if (cmd == "status") {
       int p = findParam("Status"); const char* t = (const char*)call(FF_GET_PARAMETER, u(p), id).PointerValue;
       printf("status: %s\n", t ? t : "");

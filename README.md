@@ -77,6 +77,11 @@ Favorites are kept in `Documents\HZRD-Skillet-favorites.txt`, so every copy of t
 | Caption | Text for the closed-caption decoder and the character generator presets |
 | Swap inputs | Mixer only: if "Layer" and "Layers below" come out the wrong way round, turn this on |
 
+**Output**
+| Control | What it does |
+|---|---|
+| Keep alpha | Off: every output pixel is opaque (as before 1.2.5). On: the layer's transparency passes through, following the tube's geometry, so a hole cut by an earlier effect (for example HZRD//PANEL's Reveal Layer Below) still shows the layers below. Rolling and tearing move the picture but not the hole |
+
 **Other layers as a source.** Resolume doesn't let an effect read other layers. The mixer version gets the layers below this one (everything under it, combined), so put HZRD//SkilletMix on the top layer and choose **Layers below** for Source A or B.
 
 **Audio**: the picture reacts to sound, the way the app's audio input does.
